@@ -1,0 +1,163 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "Profile",
+      "description": "Public gaming profile and performance statistics for leaderboard and multiplayer display (strictly zero PII).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "avatarId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "avatarFrame": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "boardTheme": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "diceTheme": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "elo": { "type": "number" },
+        "gamesPlayed": { "type": "number" },
+        "wins": { "type": "number" },
+        "captures": { "type": "number" },
+        "sixesRolled": { "type": "number" },
+        "winStreak": { "type": "number" },
+        "bestStreak": { "type": "number" },
+        "trophies": { "type": "number" },
+        "level": { "type": "number" },
+        "xp": { "type": "number" },
+        "league": { "type": "string", "enum": ["bronze", "silver", "gold", "grandmaster"] },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "displayName", "avatarId", "avatarFrame", "boardTheme", "diceTheme",
+        "elo", "gamesPlayed", "wins", "captures", "sixesRolled", "winStreak",
+        "bestStreak", "trophies", "level", "xp", "league", "isPublic",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "UserWallet": {
+      "title": "UserWallet",
+      "description": "Private user economy, unlocked cosmetic inventory, daily streaks, challenges, and ad reward quotas.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "coins": { "type": "number" },
+        "gems": { "type": "number" },
+        "unlockedCosmetics": { "type": "array", "description": "Owned cosmetic IDs (max 50)." },
+        "dailyStreak": { "type": "number" },
+        "lastDailyClaimDate": { "type": "string", "maxLength": 16 },
+        "dailyChallengesDate": { "type": "string", "maxLength": 16 },
+        "challengeProgress": { "type": "object", "description": "Counters for rollSixes, captures, matchesPlayed, matchesWon." },
+        "claimedChallenges": { "type": "array", "description": "Claimed challenge IDs today (max 10)." },
+        "adRewardedCountToday": { "type": "number" },
+        "adDate": { "type": "string", "maxLength": 16 },
+        "freeTournamentTickets": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "coins", "gems", "unlockedCosmetics", "dailyStreak", "lastDailyClaimDate",
+        "dailyChallengesDate", "challengeProgress", "claimedChallenges",
+        "adRewardedCountToday", "adDate", "freeTournamentTickets",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "Room": {
+      "title": "Room",
+      "description": "Real-time multiplayer Ludo game room with up to 4 players.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "hostUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "mode": { "type": "string", "enum": ["classic", "quick"] },
+        "maxPlayers": { "type": "number" },
+        "entryStake": { "type": "number" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "openPublic": { "type": "boolean" },
+        "playerUids": { "type": "array", "description": "Up to 4 human player UIDs." },
+        "seats": { "type": "array", "description": "Up to 4 player seat descriptors." },
+        "tokens": { "type": "object", "description": "Token positions by color (red, green, yellow, blue)." },
+        "turnIndex": { "type": "number" },
+        "diceValue": { "type": "number" },
+        "turnPhase": { "type": "string", "enum": ["roll", "move"] },
+        "consecutiveSixes": { "type": "number" },
+        "winnerColor": { "type": "string", "maxLength": 16 },
+        "winnerUid": { "type": "string", "maxLength": 128 },
+        "lastActionText": { "type": "string", "maxLength": 120 },
+        "turnCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "roomCode", "hostUid", "visibility", "mode", "maxPlayers", "entryStake",
+        "status", "openPublic", "playerUids", "seats", "tokens", "turnIndex", "diceValue",
+        "turnPhase", "consecutiveSixes", "winnerColor", "winnerUid",
+        "lastActionText", "turnCount", "createdAt", "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Live in-match chat message or quick reaction scoped to a multiplayer room.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderName": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "senderColor": { "type": "string", "enum": ["red", "green", "yellow", "blue"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "kind": { "type": "string", "enum": ["chat", "emote"] },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "participantUids": { "type": "array", "description": "Up to 4 room participant UIDs for private chat access." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "senderUid", "senderName", "senderColor", "text", "kind", "visibility", "participantUids", "createdAt"]
+    },
+    "Tournament": {
+      "title": "Tournament",
+      "description": "Competitive league knockout tournament with up to 8 entrants.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "tier": { "type": "string", "enum": ["bronze", "silver", "gold", "grandmaster"] },
+        "entryFee": { "type": "number" },
+        "prizePool": { "type": "number" },
+        "maxEntrants": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "active", "completed"] },
+        "creatorUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "entrantUids": { "type": "array", "description": "Up to 8 entrant UIDs." },
+        "entrants": { "type": "array", "description": "Up to 8 entrant metadata objects." },
+        "winnerUid": { "type": "string", "maxLength": 128 },
+        "winnerName": { "type": "string", "maxLength": 32 },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title", "tier", "entryFee", "prizePool", "maxEntrants", "status",
+        "creatorUid", "entrantUids", "entrants", "winnerUid", "winnerName",
+        "isPublic", "createdAt", "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": { "$ref": "#/entities/Profile" },
+      "description": "Public gaming profiles and leaderboard stats."
+    },
+    "/userWallets/{userId}": {
+      "schema": { "$ref": "#/entities/UserWallet" },
+      "description": "Strictly private user wallet, cosmetics inventory, and daily reward tracking."
+    },
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Active and waiting real-time multiplayer Ludo rooms."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Real-time table chat messages scoped to a room."
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": { "$ref": "#/entities/Tournament" },
+      "description": "Competitive league tournaments and entrant brackets."
+    }
+  }
+}

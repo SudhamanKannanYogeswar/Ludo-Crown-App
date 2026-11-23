@@ -1,0 +1,6 @@
+{
+  "name": "Ludo Crown",
+  "description": "Real-time cross-platform multiplayer Ludo featuring live matchmaking, table chat, custom avatars, offline practice AI, competitive tournaments, leaderboards, daily rewards, cosmetics, and Android AdMob monetization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
