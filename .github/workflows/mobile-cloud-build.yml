@@ -1,4 +1,4 @@
-name: Build Android APK/AAB & iOS App (Capacitor Cloud Build)
+name: Build Android APK and iOS App
 
 on:
   push:
@@ -28,14 +28,14 @@ jobs:
           java-version: 17
 
       - name: Install web dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor & AdMob plugin (cloud runner)
+      - name: Install Capacitor & AdMob plugin
         run: |
-          npm install --no-save \
+          npm install --no-save --legacy-peer-deps \
             @capacitor/core@6 \
             @capacitor/cli@6 \
             @capacitor/android@6 \
@@ -62,8 +62,8 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Build Signed Play Store AAB & Release APK (when keystore secrets are set)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      - name: Build Signed Play Store AAB & Release APK (if keystore secrets exist)
+        id: signed_release
         working-directory: android
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -71,6 +71,11 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64 secret set — skipping signed Play Store bundle."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
           ./gradlew bundleRelease assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
@@ -78,9 +83,10 @@ jobs:
             -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
           rm -f app/release-keystore.jks
+          echo "built=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload Signed Play Store AAB & APK
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: steps.signed_release.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: LudoCrown-PlayStore-Signed-Release
@@ -103,14 +109,14 @@ jobs:
           node-version: 22
 
       - name: Install web dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor iOS & AdMob plugin (cloud runner)
+      - name: Install Capacitor iOS & AdMob plugin
         run: |
-          npm install --no-save \
+          npm install --no-save --legacy-peer-deps \
             @capacitor/core@6 \
             @capacitor/cli@6 \
             @capacitor/ios@6 \
@@ -127,16 +133,29 @@ jobs:
       - name: Compile unsigned iOS Release app bundle
         working-directory: ios/App
         run: |
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build
+          if [ -d "App.xcworkspace" ]; then
+            xcodebuild \
+              -workspace App.xcworkspace \
+              -scheme App \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              build
+          else
+            xcodebuild \
+              -project App.xcodeproj \
+              -scheme App \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath build \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              build
+          fi
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/App.app Payload/App.app
           zip -r LudoCrown-iOS-Unsigned.ipa Payload
