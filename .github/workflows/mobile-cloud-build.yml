@@ -1,0 +1,149 @@
+name: Build Android APK/AAB & iOS App (Capacitor Cloud Build)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK & Play Store AAB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install web dependencies
+        run: npm install
+
+      - name: Build production web bundle
+        run: npm run build
+
+      - name: Install Capacitor & AdMob plugin (cloud runner)
+        run: |
+          npm install --no-save \
+            @capacitor/core@6 \
+            @capacitor/cli@6 \
+            @capacitor/android@6 \
+            @capacitor-community/admob@6
+
+      - name: Generate Android project & inject AdMob App ID
+        env:
+          ADMOB_ANDROID_APP_ID: ${{ secrets.ADMOB_ANDROID_APP_ID }}
+        run: |
+          npx cap add android
+          node scripts/configure-native-admob.mjs android
+          npx cap sync android
+
+      - name: Build installable Android APK (Debug)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LudoCrown-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Build Signed Play Store AAB & Release APK (when keystore secrets are set)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
+          ./gradlew bundleRelease assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          rm -f app/release-keystore.jks
+
+      - name: Upload Signed Play Store AAB & APK
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: LudoCrown-PlayStore-Signed-Release
+          path: |
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+  build-ios:
+    name: Build iOS App (macOS Cloud Runner)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install web dependencies
+        run: npm install
+
+      - name: Build production web bundle
+        run: npm run build
+
+      - name: Install Capacitor iOS & AdMob plugin (cloud runner)
+        run: |
+          npm install --no-save \
+            @capacitor/core@6 \
+            @capacitor/cli@6 \
+            @capacitor/ios@6 \
+            @capacitor-community/admob@6
+
+      - name: Generate iOS project & inject AdMob / ATT keys
+        env:
+          ADMOB_IOS_APP_ID: ${{ secrets.ADMOB_IOS_APP_ID }}
+        run: |
+          npx cap add ios
+          node scripts/configure-native-admob.mjs ios
+          npx cap sync ios
+
+      - name: Compile unsigned iOS Release app bundle
+        working-directory: ios/App
+        run: |
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/App.app
+          zip -r LudoCrown-iOS-Unsigned.ipa Payload
+
+      - name: Upload iOS Build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LudoCrown-iOS-Unsigned-IPA
+          path: ios/App/LudoCrown-iOS-Unsigned.ipa
+          if-no-files-found: error

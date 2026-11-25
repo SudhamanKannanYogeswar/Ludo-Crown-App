@@ -7,6 +7,8 @@ import {
   hasNativeAndroidAdBridge,
   REWARDED_PLACEMENTS,
   RewardedPlacementId,
+  showNativeInterstitialAd,
+  showNativeRewardedAd,
   syncNativeBannerVisibility,
 } from '../services/adMobService';
 import {
@@ -100,6 +102,7 @@ interface AppContextValue {
   // Rewards & Daily Challenges
   claimDailyStreak: () => Promise<boolean>;
   claimDailyChallenge: (challengeId: string) => Promise<boolean>;
+  grantWheelReward: (coinsDelta: number, gemsDelta: number, ticketsDelta: number) => Promise<void>;
   recordGameplayEvent: (delta: { rollSixes?: number; captures?: number }) => void;
   recordMatchCompletion: (summary: MatchSummary) => Promise<void>;
   // Multiplayer Rooms
@@ -201,6 +204,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const [adModal, setAdModal] = useState<ActiveAdModalState | null>(null);
   const [matchesSinceLastInterstitial, setMatchesSinceLastInterstitial] = useState(0);
+  const lastInterstitialAtRef = React.useRef<number>(0);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const showToast = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
@@ -458,6 +462,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return true;
     },
     [wallet, user, showToast]
+  );
+
+  const grantWheelReward = useCallback(
+    async (coinsDelta: number, gemsDelta: number, ticketsDelta: number) => {
+      const nextWallet: UserWallet = {
+        ...wallet,
+        coins: wallet.coins + coinsDelta,
+        gems: wallet.gems + gemsDelta,
+        freeTournamentTickets: Math.min(20, wallet.freeTournamentTickets + ticketsDelta),
+      };
+      setWallet(nextWallet);
+      if (user) {
+        await updateWalletEconomy(user.uid, {
+          coins: nextWallet.coins,
+          gems: nextWallet.gems,
+          unlockedCosmetics: nextWallet.unlockedCosmetics,
+          freeTournamentTickets: nextWallet.freeTournamentTickets,
+        }).catch(() => {});
+      }
+    },
+    [wallet, user]
   );
 
   const recordGameplayEvent = useCallback(
@@ -802,11 +827,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const spec = REWARDED_PLACEMENTS[placementId];
 
-      // If running inside an Android WebView/Capacitor wrapper with native AdMob SDK bridge
+      // If running inside Capacitor or Android WebView wrapper with native AdMob SDK
       if (hasNativeAndroidAdBridge()) {
-        Promise.resolve(
-          window.AndroidAdMob!.showRewardedAd!(ADMOB_CONFIG.rewardedUnitId, placementId)
-        ).then((earned) => {
+        showNativeRewardedAd(placementId).then((earned) => {
           if (earned) {
             const bonusCoins = placementId === 'daily_bonus_coins' ? 250 : 0;
             const bonusTickets = placementId === 'free_tournament_ticket' ? 1 : 0;
@@ -860,19 +883,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const maybeShowInterstitialAfterMatch = useCallback(() => {
+    const now = Date.now();
     if (matchesSinceLastInterstitial < ADMOB_CONFIG.interstitialEveryNMatches) {
       return;
     }
+    if (now - lastInterstitialAtRef.current < ADMOB_CONFIG.minInterstitialCooldownMs) {
+      return;
+    }
+    lastInterstitialAtRef.current = now;
     setMatchesSinceLastInterstitial(0);
-    if (typeof window !== 'undefined' && typeof window.AndroidAdMob?.showInterstitialAd === 'function') {
-      window.AndroidAdMob.showInterstitialAd(ADMOB_CONFIG.interstitialUnitId);
+    if (hasNativeAndroidAdBridge()) {
+      showNativeInterstitialAd().catch(() => {});
       return;
     }
     setAdModal({
       kind: 'interstitial',
       placementId: 'post_match_break',
       title: 'Match Break Interstitial',
-      rewardLabel: 'Frequency-capped (1 every 3 matches)',
+      rewardLabel: 'Frequency-capped (1 per 3 matches · 90s min gap)',
       unitId: ADMOB_CONFIG.interstitialUnitId,
       durationSeconds: 3,
       onComplete: () => setAdModal(null),
@@ -897,6 +925,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       purchaseCosmetic,
       claimDailyStreak,
       claimDailyChallenge,
+      grantWheelReward,
       recordGameplayEvent,
       recordMatchCompletion,
       activeRoom,
@@ -941,6 +970,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       purchaseCosmetic,
       claimDailyStreak,
       claimDailyChallenge,
+      grantWheelReward,
       recordGameplayEvent,
       recordMatchCompletion,
       activeRoom,

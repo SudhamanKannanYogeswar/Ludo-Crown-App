@@ -39,14 +39,14 @@ export function LeaderboardView() {
   const xpPct = Math.round((xpIntoLevel / 250) * 100);
 
   return (
-    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8 space-y-8">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="max-w-[1260px] mx-auto px-3 sm:px-6 py-5 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl sm:text-4xl font-semibold text-[#F5F2EB]">
-            Performance &amp; Global Rankings
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-white">
+            RANKINGS &amp; STATS
           </h1>
-          <p className="mt-2 text-sm text-[#A5BDB2]">
-            Detailed match telemetry, league progression, and real-time cross-device standings.
+          <p className="text-xs text-[#A6BBB0] mt-0.5">
+            Live global ELO standings and your personal career stats.
           </p>
         </div>
 
@@ -59,109 +59,88 @@ export function LeaderboardView() {
                 .catch(() => {})
                 .finally(() => setLoading(false));
             }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#123026] border border-[#24493A] text-xs font-medium text-[#C8D8D0] hover:text-white cursor-pointer"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#1A2F26] border border-[#2F4E42] text-xs font-bold text-[#C5D5CC] hover:text-white cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh Standings
+            Refresh
           </button>
         )}
       </div>
 
-      {/* Personal Performance Analytics Panel */}
-      <section className="rounded-2xl bg-[#102B22] border border-[#234739] p-6">
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-[#1E3F32]">
-          <div className="flex items-center gap-4">
+      {/* Personal Stats Card */}
+      <section className="rounded-3xl bg-[#14251E]/95 border-2 border-[#2E4C40] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#274136]">
+          <div className="flex items-center gap-3.5">
             <PlayerAvatar
               avatarId={profile.avatarId}
               frameId={profile.avatarFrame}
-              size="lg"
+              size="md"
               alt={profile.displayName}
             />
             <div>
-              <div className="text-xs text-[#E5B95C]">{LEAGUE_META[profile.league].name}</div>
-              <h2 className="font-display text-2xl font-semibold text-[#F5F2EB]">
+              <div className="text-xs font-bold text-[#EAB957]">
+                {LEAGUE_META[profile.league].name.toUpperCase()}
+              </div>
+              <h2 className="font-display text-xl font-extrabold text-white">
                 {profile.displayName}
               </h2>
-              <div className="text-xs text-[#9EB5AA] mt-0.5 font-mono tabular-nums">
-                Level {profile.level} · {xpIntoLevel}/250 XP to Level {profile.level + 1}
-                {myRank > 0 && ` · Global Rank #${myRank}`}
+              <div className="text-xs text-[#9BB0A5] font-mono tabular-nums">
+                LV.{profile.level} · {xpIntoLevel}/250 XP
+                {myRank > 0 && ` · Rank #${myRank}`}
               </div>
             </div>
           </div>
 
-          <div className="w-full sm:w-56">
-            <div className="flex items-center justify-between text-xs text-[#9EB5AA] mb-1.5">
-              <span>Season XP Progress</span>
-              <span className="font-mono tabular-nums">{xpPct}%</span>
+          <div className="w-full sm:w-52">
+            <div className="flex justify-between text-[11px] text-[#A6BBB0] mb-1 font-mono">
+              <span>NEXT LEVEL</span>
+              <span>{xpPct}%</span>
             </div>
-            <div className="h-2 rounded-full bg-[#0A1D16] overflow-hidden">
-              <div className="h-full bg-[#D4A446]" style={{ width: `${xpPct}%` }} />
+            <div className="h-2 rounded-full bg-[#0C1814] overflow-hidden">
+              <div className="h-full bg-[#EAB957]" style={{ width: `${xpPct}%` }} />
             </div>
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-5">
-          <div>
-            <div className="text-xs text-[#8FA99C]">ELO Rating</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#E5B95C]">
-              {profile.elo}
+        <div className="mt-4 grid grid-cols-3 sm:grid-cols-6 gap-3 text-center">
+          {[
+            { label: 'ELO', value: String(profile.elo), gold: true },
+            { label: 'WINS', value: `${profile.wins}/${profile.gamesPlayed}` },
+            { label: 'WIN %', value: `${winRate}%` },
+            { label: 'CAPTURES', value: `${profile.captures} (${avgCaptures})` },
+            { label: 'SIXES', value: String(profile.sixesRolled) },
+            { label: 'STREAK', value: `${profile.bestStreak} · ${profile.trophies} Cups` },
+          ].map((stat) => (
+            <div
+              key={stat.label}
+              className="p-3 rounded-2xl bg-[#0C1814] border border-[#274136]"
+            >
+              <div className="text-[10px] font-bold text-[#94A3B8]">{stat.label}</div>
+              <div
+                className={`mt-1 font-mono tabular-nums text-sm sm:text-base font-bold ${
+                  stat.gold ? 'text-[#EAB957]' : 'text-white'
+                }`}
+              >
+                {stat.value}
+              </div>
             </div>
-          </div>
-          <div>
-            <div className="text-xs text-[#8FA99C]">Matches Won</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#F5F2EB]">
-              {profile.wins}
-              <span className="text-sm text-[#8FA99C] font-normal">/{profile.gamesPlayed}</span>
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-[#8FA99C]">Win Rate</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#F5F2EB]">
-              {winRate}%
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-[#8FA99C]">Total Captures</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#F5F2EB]">
-              {profile.captures}
-            </div>
-            <div className="text-[11px] text-[#8FA99C] font-mono tabular-nums">
-              {avgCaptures} / match
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-[#8FA99C]">Sixes Rolled</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#F5F2EB]">
-              {profile.sixesRolled}
-            </div>
-          </div>
-          <div>
-            <div className="text-xs text-[#8FA99C]">Best Streak</div>
-            <div className="mt-1 font-mono tabular-nums text-2xl font-semibold text-[#F5F2EB]">
-              {profile.bestStreak}
-            </div>
-            <div className="text-[11px] text-[#8FA99C] font-mono tabular-nums">
-              Current: {profile.winStreak} · {profile.trophies} Cups
-            </div>
-          </div>
+          ))}
         </div>
       </section>
 
-      {/* Global Leaderboard Table */}
-      <section className="rounded-2xl bg-[#102B22] border border-[#234739] overflow-hidden">
-        <div className="px-6 py-4 border-b border-[#1E3F32] flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <Trophy className="w-4 h-4 text-[#D4A446]" />
-            <h2 className="font-display text-xl font-semibold text-[#F5F2EB]">
-              Global Club Leaderboard
-            </h2>
+      {/* Global Leaderboard */}
+      <section className="rounded-3xl bg-[#14251E]/95 border-2 border-[#2E4C40] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[#274136] flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-[#EAB957]" />
+            <h2 className="font-display text-lg font-bold text-white">Global Leaderboard</h2>
           </div>
 
-          <div className="flex items-center gap-1 p-1 rounded-lg bg-[#0A1D16] border border-[#1E3D31]">
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0C1814] border border-[#274136]">
             {(
               [
-                ['elo', 'ELO Rating'],
-                ['wins', 'Total Wins'],
+                ['elo', 'ELO'],
+                ['wins', 'Wins'],
                 ['captures', 'Captures'],
               ] as const
             ).map(([key, label]) => (
@@ -169,10 +148,10 @@ export function LeaderboardView() {
                 key={key}
                 type="button"
                 onClick={() => setSortBy(key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-display font-bold cursor-pointer ${
                   sortBy === key
-                    ? 'bg-[#1D4637] text-[#F5F2EB]'
-                    : 'text-[#8FA99C] hover:text-white'
+                    ? 'bg-[#EAB957] text-[#1A1000]'
+                    : 'text-[#94A3B8] hover:text-white'
                 }`}
               >
                 {label}
@@ -183,37 +162,35 @@ export function LeaderboardView() {
 
         {!isSignedIn ? (
           <div className="p-8 text-center">
-            <p className="text-sm text-[#A5BDB2] max-w-md mx-auto">
-              Sign in with Google to publish your performance stats to the global leaderboard and
-              compare ratings across devices.
+            <p className="text-xs text-[#9BB0A5] max-w-sm mx-auto">
+              Sign in with Google to appear on the live global leaderboard across devices.
             </p>
             <button
               type="button"
               onClick={signInWithGoogle}
-              className="mt-4 px-5 py-2.5 rounded-xl bg-[#D4A446] text-[#0B231B] text-sm font-semibold hover:bg-[#E1B45B] cursor-pointer"
+              className="mt-4 px-5 py-2.5 rounded-2xl font-display font-bold text-xs game-btn-gold cursor-pointer"
             >
-              Sign in with Google
+              Sign In with Google
             </button>
           </div>
         ) : sortedRows.length === 0 ? (
-          <div className="p-8 text-center text-sm text-[#9EB5AA]">
-            {loading ? 'Loading live standings...' : 'Play your first match to claim #1 on the board.'}
+          <div className="p-8 text-center text-xs text-[#A6BBB0]">
+            {loading ? 'Loading live standings...' : 'Play your first match to claim #1!'}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-[#1D3D31] text-xs text-[#8FA99C]">
-                  <th className="py-3.5 px-6 font-medium w-16">Rank</th>
-                  <th className="py-3.5 px-4 font-medium">Player</th>
-                  <th className="py-3.5 px-4 font-medium">League</th>
-                  <th className="py-3.5 px-4 font-medium text-right">Wins</th>
-                  <th className="py-3.5 px-4 font-medium text-right">Win Rate</th>
-                  <th className="py-3.5 px-4 font-medium text-right">Captures</th>
-                  <th className="py-3.5 px-6 font-medium text-right">ELO</th>
+                <tr className="border-b border-[#274136] text-[11px] font-bold text-[#A6BBB0]">
+                  <th className="py-3 px-5 w-14">#</th>
+                  <th className="py-3 px-3">PLAYER</th>
+                  <th className="py-3 px-3">LEAGUE</th>
+                  <th className="py-3 px-3 text-right">WINS</th>
+                  <th className="py-3 px-3 text-right">RATE</th>
+                  <th className="py-3 px-5 text-right">ELO</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#1A382C] text-sm">
+              <tbody className="divide-y divide-[#1D3170] text-sm">
                 {sortedRows.map((row, idx) => {
                   const isMe = row.uid === profile.uid;
                   const rowRate =
@@ -221,38 +198,35 @@ export function LeaderboardView() {
                   return (
                     <tr
                       key={row.uid}
-                      className={isMe ? 'bg-[#173B2E]/80' : 'hover:bg-[#133328]/60'}
+                      className={isMe ? 'bg-[#1D3480]/90' : 'hover:bg-[#162766]/60'}
                     >
-                      <td className="py-3.5 px-6 font-mono tabular-nums text-xs text-[#E5B95C]">
+                      <td className="py-3 px-5 font-mono tabular-nums text-xs font-bold text-[#EAB957]">
                         #{idx + 1}
                       </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
+                      <td className="py-3 px-3">
+                        <div className="flex items-center gap-2.5">
                           <PlayerAvatar
                             avatarId={row.avatarId}
                             frameId={row.avatarFrame}
                             size="xs"
                             alt={row.displayName}
                           />
-                          <span className="font-medium text-[#F5F2EB] whitespace-nowrap">
+                          <span className="font-semibold text-white whitespace-nowrap text-xs sm:text-sm">
                             {row.displayName}
-                            {isMe && <span className="ml-2 text-xs text-[#E5B95C]">(You)</span>}
+                            {isMe && <span className="ml-1.5 text-[11px] text-[#EAB957]">(You)</span>}
                           </span>
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-xs text-[#A5BDB2] whitespace-nowrap">
+                      <td className="py-3 px-3 text-xs text-[#9BB0A5] whitespace-nowrap">
                         {LEAGUE_META[row.league].name}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-[#F5F2EB]">
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-xs text-white">
                         {row.wins}
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-[#B8C9C1]">
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-xs text-[#CBD5E1]">
                         {rowRate}%
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-[#B8C9C1]">
-                        {row.captures}
-                      </td>
-                      <td className="py-3.5 px-6 text-right font-mono tabular-nums font-semibold text-[#E5B95C]">
+                      <td className="py-3 px-5 text-right font-mono tabular-nums text-xs font-bold text-[#EAB957]">
                         {row.elo}
                       </td>
                     </tr>

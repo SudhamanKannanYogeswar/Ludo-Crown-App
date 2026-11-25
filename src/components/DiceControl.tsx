@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { getDiceThemeById } from '../data/catalog';
 
 interface DiceControlProps {
@@ -7,6 +8,8 @@ interface DiceControlProps {
   diceThemeId: string;
   onRoll: () => void;
   label?: string;
+  statusSubtext?: string;
+  fullWidth?: boolean;
 }
 
 const PIP_POSITIONS: Record<number, [number, number][]> = {
@@ -49,10 +52,23 @@ export function DiceControl({
   canRoll,
   diceThemeId,
   onRoll,
-  label = 'Roll Dice',
+  label = 'ROLL DICE',
+  statusSubtext,
+  fullWidth = false,
 }: DiceControlProps) {
   const theme = getDiceThemeById(diceThemeId);
-  const displayFace = value >= 1 && value <= 6 ? value : 6;
+  const [tumbleFace, setTumbleFace] = useState(6);
+
+  // Visually cycle real die faces during roll animation for tactile arcade feel
+  useEffect(() => {
+    if (!rolling) return;
+    const id = setInterval(() => {
+      setTumbleFace((prev) => ((prev + Math.floor(Math.random() * 5)) % 6) + 1);
+    }, 60);
+    return () => clearInterval(id);
+  }, [rolling]);
+
+  const displayFace = rolling ? tumbleFace : value >= 1 && value <= 6 ? value : 6;
   const pips = PIP_POSITIONS[displayFace];
 
   return (
@@ -61,14 +77,16 @@ export function DiceControl({
       onClick={onRoll}
       disabled={!canRoll || rolling}
       aria-label={canRoll ? label : `Dice showing ${displayFace}`}
-      className={`group flex items-center gap-3.5 px-4 py-2.5 rounded-xl border transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#D4A446] min-h-[56px] ${
+      className={`group flex items-center justify-center sm:justify-start gap-3 px-4 py-2 rounded-2xl transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#EAB957] min-h-[56px] ${
+        fullWidth ? 'w-full' : ''
+      } ${
         canRoll && !rolling
-          ? 'bg-[#D4A446] border-[#E7C272] text-[#0B231B] hover:bg-[#E1B45B] active:scale-[0.98] cursor-pointer shadow-lg shadow-black/25'
-          : 'bg-[#123026] border-[#264B3C] text-[#9EB5AA] cursor-not-allowed'
+          ? 'game-btn-gold cursor-pointer'
+          : 'bg-[#13231D] border border-[#2C473C] text-[#9BB0A5] cursor-not-allowed'
       }`}
     >
       <div
-        className={`w-11 h-11 rounded-lg border-2 flex items-center justify-center shrink-0 shadow-inner ${
+        className={`relative w-11 h-11 rounded-xl border-2 flex items-center justify-center shrink-0 shadow-[0_3px_8px_rgba(0,0,0,0.42),inset_0_2px_3px_rgba(255,255,255,0.35)] ${
           rolling ? 'animate-dice-tumble' : ''
         }`}
         style={{
@@ -76,22 +94,36 @@ export function DiceControl({
           borderColor: theme.borderColor,
         }}
       >
-        <svg viewBox="0 0 100 100" className="w-9 h-9" aria-hidden="true">
+        <svg viewBox="0 0 100 100" className="w-8 h-8" aria-hidden="true">
+          <rect
+            x="6"
+            y="6"
+            width="88"
+            height="88"
+            rx="16"
+            fill="none"
+            stroke="rgba(0,0,0,0.08)"
+            strokeWidth="3"
+          />
           {pips.map(([cx, cy], idx) => (
-            <circle key={idx} cx={cx} cy={cy} r="10.5" fill={theme.pipColor} />
+            <g key={idx}>
+              <circle cx={cx} cy={cy + 1.5} r="10.2" fill="rgba(0,0,0,0.18)" />
+              <circle cx={cx} cy={cy} r="9.6" fill={theme.pipColor} />
+            </g>
           ))}
         </svg>
       </div>
-      <div className="text-left">
-        <div className="text-sm font-semibold whitespace-nowrap leading-tight">
-          {rolling ? 'Rolling...' : canRoll ? label : value > 0 ? `Rolled ${value}` : 'Waiting'}
+      <div className="text-left min-w-0">
+        <div className="font-display text-sm sm:text-base font-extrabold whitespace-nowrap leading-tight tracking-wide">
+          {rolling ? 'ROLLING...' : canRoll ? label : value > 0 ? `ROLLED ${value}` : 'WAITING'}
         </div>
         <div
-          className={`text-xs whitespace-nowrap mt-0.5 ${
-            canRoll && !rolling ? 'text-[#0B231B]/80' : 'text-[#7F9B8E]'
+          className={`text-[11px] font-semibold truncate mt-0.5 ${
+            canRoll && !rolling ? 'text-[#2B1700]/80' : 'text-[#8FA59A]'
           }`}
         >
-          {canRoll ? 'Tap or press Space' : value > 0 ? 'Select token or next turn' : 'Opponent turn'}
+          {statusSubtext ||
+            (canRoll ? 'Tap to Roll' : value > 0 ? 'Tap a highlighted pawn' : 'Opponent turn')}
         </div>
       </div>
     </button>

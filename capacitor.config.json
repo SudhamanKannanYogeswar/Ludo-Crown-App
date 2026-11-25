@@ -1,0 +1,17 @@
+{
+  "appId": "com.ludocrown.game",
+  "appName": "Ludo Crown",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#0C1713",
+    "allowMixedContent": false
+  },
+  "ios": {
+    "backgroundColor": "#0C1713",
+    "contentInset": "automatic"
+  }
+}
