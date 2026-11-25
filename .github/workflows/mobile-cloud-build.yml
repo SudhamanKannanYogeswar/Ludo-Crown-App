@@ -33,19 +33,33 @@ jobs:
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor & AdMob plugin
+      - name: Install Capacitor, AdMob & Native Firebase Auth plugins
         run: |
           npm install --no-save --legacy-peer-deps \
             @capacitor/core@6 \
             @capacitor/cli@6 \
             @capacitor/android@6 \
-            @capacitor-community/admob@6
+            @capacitor-community/admob@6 \
+            @capacitor-firebase/authentication@6
 
-      - name: Generate Android project & inject AdMob App ID
+      - name: Generate Android project & inject AdMob + Firebase config
+        id: android_config
         env:
           ADMOB_ANDROID_APP_ID: ${{ secrets.ADMOB_ANDROID_APP_ID }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           npx cap add android
+          if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 --decode > android/app/google-services.json
+            echo "has_google_services=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_google_services=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$ADMOB_ANDROID_APP_ID" ]; then
+            echo "has_live_admob=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_live_admob=false" >> "$GITHUB_OUTPUT"
+          fi
           node scripts/configure-native-admob.mjs android
           npx cap sync android
 
@@ -76,7 +90,9 @@ jobs:
             echo "built=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > app/release-keystore.jks
+          echo "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks
+          SHA1=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA1:" | awk '{print $2}' || true)
+          echo "sha1=$SHA1" >> "$GITHUB_OUTPUT"
           ./gradlew bundleRelease assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
             -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
@@ -94,6 +110,37 @@ jobs:
             android/app/build/outputs/bundle/release/app-release.aab
             android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+      - name: Publish Android Build & Firebase Sign-In Summary
+        run: |
+          {
+            echo "## Ludo Crown Android Build Summary"
+            echo ""
+            echo "| Feature | Status | Details |"
+            echo "| --- | --- | --- |"
+            if [ "${{ steps.android_config.outputs.has_live_admob }}" = "true" ]; then
+              echo "| Google AdMob App ID | Live | Injected from \`ADMOB_ANDROID_APP_ID\` |"
+            else
+              echo "| Google AdMob App ID | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret for live ads |"
+            fi
+            if [ "${{ steps.android_config.outputs.has_google_services }}" = "true" ]; then
+              echo "| Native Google Sign-In (\`google-services.json\`) | Enabled | Injected from \`GOOGLE_SERVICES_JSON_BASE64\` |"
+            else
+              echo "| Native Google Sign-In (\`google-services.json\`) | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
+            fi
+            if [ "${{ steps.signed_release.outputs.built }}" = "true" ]; then
+              echo "| Permanent Signing Keystore | Signed | Install \`app-release.apk\` from \`LudoCrown-PlayStore-Signed-Release\` |"
+              if [ -n "${{ steps.signed_release.outputs.sha1 }}" ]; then
+                echo ""
+                echo "### Permanent Signing Key SHA-1 (Paste into Firebase Console)"
+                echo "\`\`\`"
+                echo "${{ steps.signed_release.outputs.sha1 }}"
+                echo "\`\`\`"
+              fi
+            else
+              echo "| Permanent Signing Keystore | Temporary Debug Key | Add \`ANDROID_KEYSTORE_BASE64\` secrets so SHA-1 stays fixed for Google Sign-In |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-ios:
     name: Build iOS App (macOS Cloud Runner)
@@ -114,19 +161,24 @@ jobs:
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor iOS & AdMob plugin
+      - name: Install Capacitor iOS, AdMob & Native Firebase Auth plugins
         run: |
           npm install --no-save --legacy-peer-deps \
             @capacitor/core@6 \
             @capacitor/cli@6 \
             @capacitor/ios@6 \
-            @capacitor-community/admob@6
+            @capacitor-community/admob@6 \
+            @capacitor-firebase/authentication@6
 
-      - name: Generate iOS project & inject AdMob / ATT keys
+      - name: Generate iOS project & inject AdMob / Firebase config
         env:
           ADMOB_IOS_APP_ID: ${{ secrets.ADMOB_IOS_APP_ID }}
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
         run: |
           npx cap add ios
+          if [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | tr -d '\n\r ' | base64 --decode > ios/App/App/GoogleService-Info.plist
+          fi
           node scripts/configure-native-admob.mjs ios
           npx cap sync ios
 

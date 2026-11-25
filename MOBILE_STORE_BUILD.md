@@ -4,38 +4,56 @@ You do **not** need Android Studio or Xcode installed on your computer. This pro
 
 ---
 
-## 1. Build & Download Your Android `.apk` in 3 Minutes (Free, Browser-Only)
+## 1. Enable Google Sign-In, Play Online & Play Friends in Your Android APK
 
-1. **Push this project to a GitHub repository** (use AI Studio's GitHub export / push button, or download the zip and upload it to a new GitHub repo).
-2. *(Recommended for live AdMob banner)* In your GitHub repo, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
-   - **`ADMOB_ANDROID_APP_ID`**: your AdMob Android App ID (`ca-app-pub-7279678697929131~XXXXXXXXXX`, found in Google AdMob → App settings).
-   - *(Optional for iOS)* **`ADMOB_IOS_APP_ID`**: your AdMob iOS App ID.
-   - *(Note: If you skip this step on your first test run, the workflow automatically falls back to Google's official test App ID so your first `.apk` still builds right away.)*
-3. Open the **Actions** tab in your GitHub repository:
-   - The workflow **`Build Android APK/AAB & iOS App (Capacitor Cloud Build)`** runs automatically on every push to `main`/`master` (or click **Run workflow** manually).
-   - Once green (~3–5 minutes), scroll down to **Artifacts** and download **`LudoCrown-Android-APK`** (`app-debug.apk`) to install directly on your Android phone!
+Web popup sign-in is blocked by Google inside Android WebViews. Ludo Crown automatically uses **Native Android Google Sign-In** (`@capacitor-firebase/authentication`) inside the APK, which requires two one-time steps so Google trusts your APK:
+
+### Step A — Create a Permanent Android Keystore (Browser-Only, No Install)
+Because GitHub Actions generates a different random debug key on every run, create one permanent signing keystore right inside your browser using **GitHub Codespaces** (click green **`<> Code` → Codespaces → Create codespace on main** in your repo) and paste this single command:
+
+```bash
+keytool -genkeypair -v -keystore ludocrown-upload.jks -alias ludocrown -keyalg RSA -keysize 2048 -validity 10000 -storepass LudoCrown2026! -keypass LudoCrown2026! -dname "CN=Ludo Crown, O=Ludo Crown, C=IN" && echo "--- SHA1 (PASTE IN FIREBASE CONSOLE) ---" && keytool -list -v -keystore ludocrown-upload.jks -alias ludocrown -storepass LudoCrown2026! | grep "SHA1:" && echo "--- ANDROID_KEYSTORE_BASE64 (PASTE IN GITHUB SECRET) ---" && base64 -w 0 ludocrown-upload.jks && echo ""
+```
+
+Save the outputs and add these 4 secrets in your GitHub repo (**Settings → Secrets and variables → Actions → New repository secret**):
+- **`ANDROID_KEYSTORE_BASE64`** = the base64 line printed above
+- **`ANDROID_KEYSTORE_PASSWORD`** = `LudoCrown2026!` (or whatever password you chose)
+- **`ANDROID_KEY_ALIAS`** = `ludocrown`
+- **`ANDROID_KEY_PASSWORD`** = `LudoCrown2026!`
+
+### Step B — Register Android App + SHA-1 in Firebase Console & Add `google-services.json`
+1. Open **[Firebase Console](https://console.firebase.google.com/)** and select your project **`gen-lang-client-0829075952`**.
+2. Go to **Project Settings (gear icon) → General → Your apps → Add app → Android**.
+3. Fill in:
+   - **Android package name**: `com.ludocrown.game`
+   - **App nickname**: `Ludo Crown Android`
+   - **Debug / Signing certificate SHA-1**: paste the **SHA-1** from Step A (you can also view it on the GitHub Actions run summary page after adding the keystore secrets).
+4. Click **Register app**, then **Download `google-services.json`**.
+5. Convert `google-services.json` to base64 (in Codespaces or any base64 encoder: `base64 -w 0 google-services.json`) and add it as a GitHub Secret:
+   - **`GOOGLE_SERVICES_JSON_BASE64`** = base64 contents of `google-services.json`
+
+### Step C — Build & Install the Signed APK
+1. Push your latest code (or open **Actions → Build Android APK and iOS App → Run workflow**).
+2. Download **`LudoCrown-PlayStore-Signed-Release`** and install **`app-release.apk`** on your phone (uninstall the old debug APK first so signatures don't conflict).
+3. **Google Sign-In**, **Play Online**, **Play Friends**, **Tournaments**, and **Cloud Sync** will now all work natively!
+
+---
+
+## 2. Enable Live Google AdMob Banners in the APK
+
+Add your AdMob Android App ID in **GitHub Settings → Secrets and variables → Actions → New repository secret**:
+- **`ADMOB_ANDROID_APP_ID`**: your AdMob Android App ID (`ca-app-pub-7279678697929131~XXXXXXXXXX`, found in Google AdMob → App settings).
+- *(Optional for iOS)* **`ADMOB_IOS_APP_ID`**: your AdMob iOS App ID.
 
 > Your live Android Banner Unit ID (`ca-app-pub-7279678697929131/9701826584`) is already wired in `src/services/adMobService.ts`.
 
 ---
 
-## 2. Generate a Signed Google Play Store `.aab` in GitHub Actions (No Android Studio)
-
-To upload to **Google Play Console**, you need a signed `.aab` bundle. Add these 4 secrets under **GitHub Settings → Secrets and variables → Actions**:
-
-- `ANDROID_KEYSTORE_BASE64` — base64-encoded contents of your `.jks` signing keystore
-- `ANDROID_KEYSTORE_PASSWORD` — keystore password
-- `ANDROID_KEY_ALIAS` — key alias
-- `ANDROID_KEY_PASSWORD` — key password
-
-As soon as `ANDROID_KEYSTORE_BASE64` is added, the workflow automatically produces and uploads **`LudoCrown-PlayStore-Signed-Release`** containing both `app-release.aab` (for Google Play Console) and `app-release.apk`.
-
----
-
 ## 3. iOS App Store Build (No Mac Needed)
 
-- The same GitHub Actions workflow runs on Apple's cloud `macos-latest` runner, injects your `GADApplicationIdentifier` + Apple ATT permission (`NSUserTrackingUsageDescription`) + Google `SKAdNetworkItems`, and outputs **`LudoCrown-iOS-Unsigned-IPA`**.
-- To sign and publish directly to **Apple App Store Connect** without a Mac, connect this exact GitHub repository to **Codemagic** (free tier supports App Store Connect API key signing & TestFlight upload).
+- Optionally add **`GOOGLE_SERVICE_INFO_PLIST_BASE64`** (base64 of your Firebase iOS `GoogleService-Info.plist`) to enable native Google Sign-In on iOS.
+- The GitHub Actions workflow runs on Apple's `macos-latest` runner and outputs **`LudoCrown-iOS-Unsigned-IPA`**.
+- To sign and publish directly to **Apple App Store Connect** without a Mac, connect this GitHub repo to **Codemagic**.
 
 ---
 

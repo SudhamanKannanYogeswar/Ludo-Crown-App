@@ -1,6 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
-import { auth, googleProvider, testConnection } from '../firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import {
+  auth,
+  isCapacitorNativeApp,
+  signInWithGoogleAuto,
+  signOutGoogleAuto,
+  testConnection,
+} from '../firebase';
 import {
   ActiveAdModalState,
   ADMOB_CONFIG,
@@ -323,19 +329,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
-      showToast('Signed in with Google. Cross-device sync enabled.', 'success');
+      await signInWithGoogleAuto();
+      showToast('Signed in with Google. Online play & cloud sync enabled.', 'success');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Google Sign-In failed.';
-      if (!msg.includes('popup-closed-by-user')) {
-        showToast('Unable to complete Google Sign-In. Please allow popups and try again.', 'error');
+      const rawMsg = err instanceof Error ? err.message : String(err ?? '');
+      const lower = rawMsg.toLowerCase();
+      if (
+        lower.includes('popup-closed-by-user') ||
+        lower.includes('cancel') ||
+        lower.includes('12501') ||
+        lower.includes('dismissed')
+      ) {
+        return;
       }
+
+      if (isCapacitorNativeApp()) {
+        if (
+          rawMsg === 'NATIVE_AUTH_PLUGIN_MISSING' ||
+          lower.includes('default_web_client_id') ||
+          lower.includes('developer_error') ||
+          lower.includes('statuscode=10') ||
+          lower.includes('apiexception: 10') ||
+          lower.includes('no_id_token')
+        ) {
+          showToast(
+            'Android Google Sign-In needs google-services.json + SHA-1 in Firebase Console & GitHub Secrets (see MOBILE_STORE_BUILD.md).',
+            'error'
+          );
+          return;
+        }
+        showToast(`Google Sign-In failed: ${rawMsg || 'Please check network and try again.'}`, 'error');
+        return;
+      }
+
+      showToast('Unable to complete Google Sign-In. Please allow popups and try again.', 'error');
     }
   }, [showToast]);
 
   const signOutUser = useCallback(async () => {
     try {
-      await signOut(auth);
+      await signOutGoogleAuto();
       setActiveRoomId(null);
       setActiveRoom(null);
       showToast('Signed out. You can still play Offline Practice anytime.', 'info');
