@@ -11,6 +11,21 @@ const IOS_APP_ID =
   (process.env.ADMOB_IOS_APP_ID || '').trim() ||
   'ca-app-pub-3940256099942544~1458002511';
 
+function readWebOAuthClientId() {
+  try {
+    const cfgPath = path.resolve('firebase-applet-config.json');
+    if (fs.existsSync(cfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      if (typeof cfg?.oAuthClientId === 'string' && cfg.oAuthClientId.trim()) {
+        return cfg.oAuthClientId.trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
 function ensurePermission(xml, permissionName) {
   if (xml.includes(permissionName)) return xml;
   return xml.replace(
@@ -19,14 +34,50 @@ function ensurePermission(xml, permissionName) {
   );
 }
 
+function formatSha1Hex(rawHex) {
+  const clean = String(rawHex || '').replace(/[^a-fA-F0-9]/g, '').toUpperCase();
+  if (clean.length !== 40) return clean;
+  return clean.match(/.{2}/g).join(':');
+}
+
+function enableGoogleAuthInVariablesGradle() {
+  const varsPath = path.resolve('android/variables.gradle');
+  if (!fs.existsSync(varsPath)) {
+    console.warn('android/variables.gradle not found; cannot set rgcfaIncludeGoogle = true.');
+    return false;
+  }
+  let content = fs.readFileSync(varsPath, 'utf8');
+  if (content.includes('rgcfaIncludeGoogle')) {
+    content = content.replace(/rgcfaIncludeGoogle\s*=\s*(true|false)/, 'rgcfaIncludeGoogle = true');
+  } else {
+    content = content.replace(/ext\s*\{/, 'ext {\n    rgcfaIncludeGoogle = true');
+  }
+  fs.writeFileSync(varsPath, content, 'utf8');
+  console.log('Enabled rgcfaIncludeGoogle = true in android/variables.gradle (bundles play-services-auth)');
+  return true;
+}
+
 function configureAndroidFirebaseGradle() {
+  const googleAuthEnabled = enableGoogleAuthInVariablesGradle();
+  const report = {
+    googleAuthEnabled,
+    hasGoogleServices: false,
+    packageMatched: false,
+    hasWebClient: false,
+    injectedWebClient: false,
+    sha1List: [],
+  };
+
   const googleServicesPath = path.resolve('android/app/google-services.json');
   if (!fs.existsSync(googleServicesPath)) {
     console.warn(
       'android/app/google-services.json not found — native Android Google Sign-In will stay inactive until GOOGLE_SERVICES_JSON_BASE64 secret is set.'
     );
+    fs.writeFileSync(path.resolve('android/.native-config-report.json'), JSON.stringify(report, null, 2));
     return;
   }
+
+  report.hasGoogleServices = true;
 
   try {
     const parsed = JSON.parse(fs.readFileSync(googleServicesPath, 'utf8'));
@@ -39,15 +90,56 @@ function configureAndroidFirebaseGradle() {
         'WARNING: google-services.json does not contain package_name "com.ludocrown.game". Native Google Sign-In may fail.'
       );
     } else {
-      const oauthClients = Array.isArray(matchingClient.oauth_client)
-        ? matchingClient.oauth_client
-        : [];
-      const hasWebClient = oauthClients.some((o) => o?.client_type === 3);
-      const hasAndroidClient = oauthClients.some((o) => o?.client_type === 1);
+      report.packageMatched = true;
+      if (!Array.isArray(matchingClient.oauth_client)) {
+        matchingClient.oauth_client = [];
+      }
+
+      const androidClients = matchingClient.oauth_client.filter((o) => o?.client_type === 1);
+      report.sha1List = androidClients
+        .map((o) => formatSha1Hex(o?.android_info?.certificate_hash))
+        .filter(Boolean);
+
+      let hasWebClient = matchingClient.oauth_client.some((o) => o?.client_type === 3 && o?.client_id);
+
+      // Ensure client_type=3 (Web OAuth Client ID) exists so google-services Gradle plugin generates R.string.default_web_client_id
+      if (!hasWebClient) {
+        const fallbackWebClientId = readWebOAuthClientId();
+        if (fallbackWebClientId) {
+          matchingClient.oauth_client.push({
+            client_id: fallbackWebClientId,
+            client_type: 3,
+          });
+          if (!matchingClient.services) matchingClient.services = {};
+          if (!matchingClient.services.appinvite_service) {
+            matchingClient.services.appinvite_service = { other_platform_oauth_client: [] };
+          }
+          if (!Array.isArray(matchingClient.services.appinvite_service.other_platform_oauth_client)) {
+            matchingClient.services.appinvite_service.other_platform_oauth_client = [];
+          }
+          const hasOtherWeb = matchingClient.services.appinvite_service.other_platform_oauth_client.some(
+            (o) => o?.client_id === fallbackWebClientId
+          );
+          if (!hasOtherWeb) {
+            matchingClient.services.appinvite_service.other_platform_oauth_client.push({
+              client_id: fallbackWebClientId,
+              client_type: 3,
+            });
+          }
+          fs.writeFileSync(googleServicesPath, JSON.stringify(parsed, null, 2), 'utf8');
+          hasWebClient = true;
+          report.injectedWebClient = true;
+          console.log(
+            `Injected missing Web OAuth Client (client_type=3: ${fallbackWebClientId}) into android/app/google-services.json for R.string.default_web_client_id`
+          );
+        }
+      }
+
+      report.hasWebClient = hasWebClient;
       console.log(
-        `Verified google-services.json for com.ludocrown.game (webOAuthClient=${hasWebClient}, androidSha1Client=${hasAndroidClient})`
+        `Verified google-services.json for com.ludocrown.game (webOAuthClient=${hasWebClient}, androidSha1Count=${report.sha1List.length}, sha1s=${report.sha1List.join(', ') || 'NONE'})`
       );
-      if (!hasAndroidClient) {
+      if (report.sha1List.length === 0) {
         console.warn(
           'WARNING: google-services.json has no Android SHA-1 OAuth client (client_type=1). Add your APK SHA-1 fingerprint in Firebase Console and re-download google-services.json.'
         );
@@ -56,6 +148,8 @@ function configureAndroidFirebaseGradle() {
   } catch (err) {
     console.warn('WARNING: Could not parse android/app/google-services.json:', err?.message || err);
   }
+
+  fs.writeFileSync(path.resolve('android/.native-config-report.json'), JSON.stringify(report, null, 2));
 
   // Ensure root android/build.gradle has google-services classpath
   const rootGradlePath = path.resolve('android/build.gradle');

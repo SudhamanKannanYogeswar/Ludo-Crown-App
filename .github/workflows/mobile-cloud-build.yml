@@ -6,6 +6,12 @@ on:
       - main
       - master
   workflow_dispatch:
+    inputs:
+      build_ios:
+        description: 'Also build unsigned iOS IPA (uses GitHub macOS runner)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build-android:
@@ -27,20 +33,17 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install web dependencies
+      - name: Install web & Capacitor plugin dependencies
         run: npm install --legacy-peer-deps
 
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor, AdMob & Native Firebase Auth plugins
+      - name: Install Capacitor CLI & Android platform
         run: |
           npm install --no-save --legacy-peer-deps \
-            @capacitor/core@6 \
             @capacitor/cli@6 \
-            @capacitor/android@6 \
-            @capacitor-community/admob@6 \
-            @capacitor-firebase/authentication@6
+            @capacitor/android@6
 
       - name: Generate Android project & inject AdMob + Firebase config
         id: android_config
@@ -62,6 +65,10 @@ jobs:
           fi
           node scripts/configure-native-admob.mjs android
           npx cap sync android
+          REPORT_SHA1=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log((r.sha1List||[]).join(', '));" 2>/dev/null || true)
+          REPORT_WEB=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.hasWebClient ? 'true' : 'false');" 2>/dev/null || echo "false")
+          echo "gs_sha1=$REPORT_SHA1" >> "$GITHUB_OUTPUT"
+          echo "gs_web_client=$REPORT_WEB" >> "$GITHUB_OUTPUT"
 
       - name: Build installable Android APK (Debug)
         working-directory: android
@@ -119,23 +126,22 @@ jobs:
             echo "| Feature | Status | Details |"
             echo "| --- | --- | --- |"
             if [ "${{ steps.android_config.outputs.has_live_admob }}" = "true" ]; then
-              echo "| Google AdMob App ID | Live | Injected from \`ADMOB_ANDROID_APP_ID\` |"
+              echo "| Google AdMob App ID | Live | Injected from \`ADMOB_ANDROID_APP_ID\` + native AdMob plugin wired |"
             else
               echo "| Google AdMob App ID | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret for live ads |"
             fi
             if [ "${{ steps.android_config.outputs.has_google_services }}" = "true" ]; then
-              echo "| Native Google Sign-In (\`google-services.json\`) | Enabled | Injected from \`GOOGLE_SERVICES_JSON_BASE64\` |"
+              echo "| Native Google Sign-In | Enabled | \`rgcfaIncludeGoogle=true\`, \`google-services.json\` injected, Web OAuth=${{ steps.android_config.outputs.gs_web_client }} |"
             else
-              echo "| Native Google Sign-In (\`google-services.json\`) | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
+              echo "| Native Google Sign-In | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
             fi
             if [ "${{ steps.signed_release.outputs.built }}" = "true" ]; then
               echo "| Permanent Signing Keystore | Signed | Install \`app-release.apk\` from \`LudoCrown-PlayStore-Signed-Release\` |"
               if [ -n "${{ steps.signed_release.outputs.sha1 }}" ]; then
                 echo ""
-                echo "### Permanent Signing Key SHA-1 (Paste into Firebase Console)"
-                echo "\`\`\`"
-                echo "${{ steps.signed_release.outputs.sha1 }}"
-                echo "\`\`\`"
+                echo "### Signing SHA-1 Verification"
+                echo "- **APK Keystore SHA-1**: \`${{ steps.signed_release.outputs.sha1 }}\`"
+                echo "- **SHA-1(s) inside \`google-services.json\`**: \`${{ steps.android_config.outputs.gs_sha1 || 'NONE FOUND — re-download google-services.json after adding SHA-1!' }}\`"
               fi
             else
               echo "| Permanent Signing Keystore | Temporary Debug Key | Add \`ANDROID_KEYSTORE_BASE64\` secrets so SHA-1 stays fixed for Google Sign-In |"
@@ -144,6 +150,7 @@ jobs:
 
   build-ios:
     name: Build iOS App (macOS Cloud Runner)
+    if: github.event_name == 'workflow_dispatch' && inputs.build_ios == true
     runs-on: macos-latest
 
     steps:
@@ -155,20 +162,17 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install web dependencies
+      - name: Install web & Capacitor plugin dependencies
         run: npm install --legacy-peer-deps
 
       - name: Build production web bundle
         run: npm run build
 
-      - name: Install Capacitor iOS, AdMob & Native Firebase Auth plugins
+      - name: Install Capacitor CLI & iOS platform
         run: |
           npm install --no-save --legacy-peer-deps \
-            @capacitor/core@6 \
             @capacitor/cli@6 \
-            @capacitor/ios@6 \
-            @capacitor-community/admob@6 \
-            @capacitor-firebase/authentication@6
+            @capacitor/ios@6
 
       - name: Generate iOS project & inject AdMob / Firebase config
         env:

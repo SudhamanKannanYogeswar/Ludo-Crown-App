@@ -345,20 +345,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (isCapacitorNativeApp()) {
         if (
-          rawMsg === 'NATIVE_AUTH_PLUGIN_MISSING' ||
           lower.includes('default_web_client_id') ||
           lower.includes('developer_error') ||
           lower.includes('statuscode=10') ||
           lower.includes('apiexception: 10') ||
-          lower.includes('no_id_token')
+          rawMsg === 'NATIVE_AUTH_NO_ID_TOKEN'
         ) {
           showToast(
-            'Android Google Sign-In needs google-services.json + SHA-1 in Firebase Console & GitHub Secrets (see MOBILE_STORE_BUILD.md).',
+            `Google Sign-In config error (${rawMsg || 'code 10'}). Check SHA-1 in Firebase Console & re-download google-services.json.`,
             'error'
           );
           return;
         }
-        showToast(`Google Sign-In failed: ${rawMsg || 'Please check network and try again.'}`, 'error');
+        showToast(
+          `Google Sign-In error: ${rawMsg || 'Please check internet connection and try again.'}`,
+          'error'
+        );
         return;
       }
 

@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core';
+import { AdMob, BannerAdPosition, BannerAdSize } from '@capacitor-community/admob';
+
 export type RewardedPlacementId =
   | 'double_match_reward'
   | 'daily_bonus_coins'
@@ -37,35 +40,12 @@ export interface ActiveAdModalState {
   onDismiss: () => void;
 }
 
-interface CapacitorAdMobPlugin {
-  initialize?: (opts?: { initializeForTesting?: boolean; testingDevices?: string[] }) => Promise<void>;
-  showBanner?: (opts: {
-    adId: string;
-    adSize?: string;
-    position?: string;
-    margin?: number;
-    isTesting?: boolean;
-    npa?: boolean;
-  }) => Promise<void>;
-  hideBanner?: () => Promise<void>;
-  prepareRewardVideoAd?: (opts: { adId: string; isTesting?: boolean; npa?: boolean }) => Promise<void>;
-  showRewardVideoAd?: () => Promise<{ type?: string; amount?: number } | void>;
-  prepareInterstitial?: (opts: { adId: string; isTesting?: boolean; npa?: boolean }) => Promise<void>;
-  showInterstitial?: () => Promise<void>;
-}
-
 declare global {
   interface Window {
     AndroidAdMob?: {
       showRewardedAd?: (unitId: string, placementId: string, npa?: boolean) => Promise<boolean> | boolean;
       showInterstitialAd?: (unitId: string, npa?: boolean) => Promise<boolean> | boolean;
       setBannerVisible?: (visible: boolean, unitId: string, npa?: boolean) => void;
-    };
-    Capacitor?: {
-      getPlatform?: () => string;
-      Plugins?: {
-        AdMob?: CapacitorAdMobPlugin;
-      };
     };
   }
 }
@@ -74,7 +54,7 @@ const CONSENT_STORAGE_KEY = 'ludo_crown_ad_consent_mode_v1';
 
 export function detectMobilePlatform(): MobilePlatform {
   if (typeof window === 'undefined') return 'web';
-  const capPlatform = window.Capacitor?.getPlatform?.();
+  const capPlatform = Capacitor.getPlatform();
   if (capPlatform === 'android' || capPlatform === 'ios') return capPlatform;
   const ua = window.navigator.userAgent.toLowerCase();
   if (/iphone|ipad|ipod/.test(ua)) return 'ios';
@@ -167,7 +147,7 @@ export const REWARDED_PLACEMENTS: Record<
 };
 
 export function hasCapacitorAdMobPlugin(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.Capacitor?.Plugins?.AdMob);
+  return Capacitor.isNativePlatform();
 }
 
 export function hasNativeAndroidAdBridge(): boolean {
@@ -179,11 +159,11 @@ export function hasNativeAndroidAdBridge(): boolean {
 
 let capacitorInitialized = false;
 
-async function ensureCapacitorAdMobInitialized(plugin: CapacitorAdMobPlugin) {
+async function ensureCapacitorAdMobInitialized() {
   if (capacitorInitialized) return;
   capacitorInitialized = true;
   try {
-    await plugin.initialize?.({});
+    await AdMob.initialize({});
   } catch {
     capacitorInitialized = false;
   }
@@ -192,11 +172,10 @@ async function ensureCapacitorAdMobInitialized(plugin: CapacitorAdMobPlugin) {
 export async function showNativeRewardedAd(placementId: RewardedPlacementId): Promise<boolean | null> {
   const npa = getAdConsentMode() === 'non_personalized';
   if (hasCapacitorAdMobPlugin()) {
-    const plugin = window.Capacitor!.Plugins!.AdMob!;
     try {
-      await ensureCapacitorAdMobInitialized(plugin);
-      await plugin.prepareRewardVideoAd?.({ adId: ADMOB_CONFIG.rewardedUnitId, npa });
-      const reward = await plugin.showRewardVideoAd?.();
+      await ensureCapacitorAdMobInitialized();
+      await AdMob.prepareRewardVideoAd({ adId: ADMOB_CONFIG.rewardedUnitId, npa });
+      const reward = await AdMob.showRewardVideoAd();
       return Boolean(reward);
     } catch {
       return false;
@@ -214,11 +193,10 @@ export async function showNativeRewardedAd(placementId: RewardedPlacementId): Pr
 export async function showNativeInterstitialAd(): Promise<boolean> {
   const npa = getAdConsentMode() === 'non_personalized';
   if (hasCapacitorAdMobPlugin()) {
-    const plugin = window.Capacitor!.Plugins!.AdMob!;
     try {
-      await ensureCapacitorAdMobInitialized(plugin);
-      await plugin.prepareInterstitial?.({ adId: ADMOB_CONFIG.interstitialUnitId, npa });
-      await plugin.showInterstitial?.();
+      await ensureCapacitorAdMobInitialized();
+      await AdMob.prepareInterstitial({ adId: ADMOB_CONFIG.interstitialUnitId, npa });
+      await AdMob.showInterstitial();
       return true;
     } catch {
       return false;
@@ -234,21 +212,20 @@ export async function showNativeInterstitialAd(): Promise<boolean> {
 export function syncNativeBannerVisibility(visible: boolean) {
   const npa = getAdConsentMode() === 'non_personalized';
   if (hasCapacitorAdMobPlugin()) {
-    const plugin = window.Capacitor!.Plugins!.AdMob!;
     if (visible) {
-      ensureCapacitorAdMobInitialized(plugin)
+      ensureCapacitorAdMobInitialized()
         .then(() =>
-          plugin.showBanner?.({
+          AdMob.showBanner({
             adId: ADMOB_CONFIG.bannerUnitId,
-            adSize: 'ADAPTIVE_BANNER',
-            position: 'BOTTOM_CENTER',
+            adSize: BannerAdSize.ADAPTIVE_BANNER,
+            position: BannerAdPosition.BOTTOM_CENTER,
             margin: 56,
             npa,
           })
         )
         .catch(() => {});
     } else {
-      plugin.hideBanner?.().catch(() => {});
+      AdMob.hideBanner().catch(() => {});
     }
     return;
   }
