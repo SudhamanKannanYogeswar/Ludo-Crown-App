@@ -1,17 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ChevronLeft,
-  ChevronRight,
-  Cpu,
+  Coins,
   Crown,
-  Flame,
   Gift,
-  Globe,
   KeyRound,
-  Palette,
-  Play,
+  PlusSquare,
   RefreshCw,
+  Send,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Trophy,
   Users,
@@ -19,23 +16,25 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
-  AVATAR_OPTIONS,
-  BOARD_THEMES,
-  DAILY_CHALLENGES,
-  getAvatarById,
   getTodayDateString,
-  LEAGUE_META,
+  HERO_STUDIO_BOARD_IMAGE,
+  MODE_DUEL1V1_IMAGE,
+  MODE_QUICK4P_IMAGE,
+  MODE_VSBOT_IMAGE,
 } from '../data/catalog';
-import { tabletopAudio } from '../game/sound';
 import { AiDifficulty, GameMode } from '../types';
-import { PlayerAvatar } from './PlayerAvatar';
 
-const CHARACTER_LINES = [
-  'Ready to roll a six?',
-  'Star tiles keep you safe!',
-  'Let’s claim the crown!',
-  'Spin for bonus coins!',
-  'Challenge friends by code!',
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase() || 'PL';
+}
+
+const FRIEND_BADGE_STYLES = [
+  'bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] text-white',
+  'bg-gradient-to-b from-[#34F59F] to-[#059669] text-white',
+  'bg-gradient-to-b from-[#FFF066] to-[#F59E0B] text-[#111827]',
+  'bg-gradient-to-b from-[#38BDF8] to-[#1D4ED8] text-white',
 ];
 
 interface LobbyViewProps {
@@ -56,10 +55,14 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     launchOfflinePractice,
     claimDailyStreak,
     triggerRewardedAd,
-    saveCustomization,
     signInWithGoogle,
     setActiveTab,
     showToast,
+    friendships,
+    incomingInvites,
+    inviteFriendToPlay,
+    acceptRoomInvite,
+    declineRoomInvite,
   } = useApp();
 
   const [mode, setMode] = useState<GameMode>('quick');
@@ -68,13 +71,9 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>('tactical');
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
-  const [friendsModalOpen, setFriendsModalOpen] = useState(false);
-  const [tablesSheetOpen, setTablesSheetOpen] = useState(false);
-  const [skinsSheetOpen, setSkinsSheetOpen] = useState(false);
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+  const [optionsModalOpen, setOptionsModalOpen] = useState(false);
   const [joinCode, setJoinCode] = useState('');
-
-  const [cheering, setCheering] = useState(false);
-  const [speechLine, setSpeechLine] = useState(CHARACTER_LINES[0]);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -84,54 +83,11 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
 
   const today = getTodayDateString();
   const dailyChestReady = wallet.lastDailyClaimDate !== today;
-  const claimableChallenges = DAILY_CHALLENGES.filter(
-    (ch) =>
-      !wallet.claimedChallenges.includes(ch.id) &&
-      (wallet.challengeProgress[ch.metric] || 0) >= ch.target
-  ).length;
 
-  const currentAvatarIdx = Math.max(
-    0,
-    AVATAR_OPTIONS.findIndex((a) => a.id === profile.avatarId)
+  const acceptedFriends = useMemo(
+    () => friendships.filter((f) => f.status === 'accepted'),
+    [friendships]
   );
-  const currentAvatar = getAvatarById(profile.avatarId);
-  const xpIntoLevel = profile.xp % 250;
-  const xpPct = Math.round((xpIntoLevel / 250) * 100);
-
-  const handleTapCharacter = () => {
-    tabletopAudio.playSafeStar();
-    setCheering(true);
-    const nextLine = CHARACTER_LINES[Math.floor(Math.random() * CHARACTER_LINES.length)];
-    setSpeechLine(nextLine);
-    setTimeout(() => setCheering(false), 520);
-  };
-
-  const handleCycleAvatar = async (dir: -1 | 1) => {
-    const nextIdx = (currentAvatarIdx + dir + AVATAR_OPTIONS.length) % AVATAR_OPTIONS.length;
-    const nextAvatar = AVATAR_OPTIONS[nextIdx];
-    tabletopAudio.playTokenMove();
-    setSpeechLine(`${nextAvatar.name} ready!`);
-    await saveCustomization({
-      displayName: profile.displayName,
-      avatarId: nextAvatar.id,
-      avatarFrame: profile.avatarFrame,
-      boardTheme: profile.boardTheme,
-      diceTheme: profile.diceTheme,
-    });
-  };
-
-  const handleQuickOnline = async () => {
-    if (!isSignedIn) {
-      await signInWithGoogle();
-      return;
-    }
-    setBusyAction('online');
-    try {
-      await startQuickMatchmaking({ mode, maxPlayers: playerCount, entryStake: stake });
-    } finally {
-      setBusyAction(null);
-    }
-  };
 
   const handleCreatePrivate = async () => {
     if (!isSignedIn) {
@@ -141,714 +97,534 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     setBusyAction('private');
     try {
       await createPrivateRoom({ mode, maxPlayers: playerCount, entryStake: stake });
-      setFriendsModalOpen(false);
     } finally {
       setBusyAction(null);
     }
   };
 
-  const handleJoinCode = async (e: React.FormEvent) => {
+  const handleQuickOnlineMode = async (targetPlayers: 2 | 4) => {
+    if (!isSignedIn) {
+      await signInWithGoogle();
+      return;
+    }
+    setBusyAction(targetPlayers === 4 ? 'quick4' : 'duel2');
+    try {
+      await startQuickMatchmaking({ mode, maxPlayers: targetPlayers, entryStake: stake });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (joinCode.length !== 6) return;
+    const cleaned = joinCode.trim().toUpperCase();
+    if (cleaned.length !== 6) return;
     if (!isSignedIn) {
       await signInWithGoogle();
       return;
     }
     setBusyAction('join');
     try {
-      await joinRoom(joinCode);
+      await joinRoom(cleaned);
       setJoinCode('');
-      setFriendsModalOpen(false);
+      setJoinModalOpen(false);
     } finally {
       setBusyAction(null);
     }
   };
 
-  const handleQuickBoardSwitch = async (boardId: string) => {
-    if (boardId !== 'board_emerald' && !wallet.unlockedCosmetics.includes(boardId)) {
-      setSkinsSheetOpen(false);
-      setActiveTab('atelier');
-      return;
+  const handleInviteFriend = async (friendUid: string, friendName: string) => {
+    setBusyAction(`invite_${friendUid}`);
+    try {
+      await inviteFriendToPlay(friendUid, friendName);
+    } finally {
+      setBusyAction(null);
     }
-    tabletopAudio.playTokenMove();
-    await saveCustomization({
-      displayName: profile.displayName,
-      avatarId: profile.avatarId,
-      avatarFrame: profile.avatarFrame,
-      boardTheme: boardId,
-      diceTheme: profile.diceTheme,
-    });
   };
 
   return (
-    <div className="min-h-full w-full flex flex-col justify-center">
-      {/* MOBILE & TABLET NATIVE APP HOME STAGE (< lg): Fits 1-screen on phones, safely scrollable if short/landscape */}
-      <div className="lg:hidden min-h-full w-full max-w-lg mx-auto px-3 py-2.5 pb-4 flex flex-col justify-between gap-2.5">
-        <div className="shrink-0 rounded-2xl bg-[#14251E]/90 border-2 border-[#2E4C40] px-3 py-2 flex items-center gap-2.5 shadow-lg">
-          <div className="flex items-center gap-1 shrink-0">
+    <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-4 pb-8">
+      {/* Live Incoming Room Invite Banner right at the top of Home */}
+      {incomingInvites.length > 0 && (
+        <div className="mb-4 rounded-3xl bg-gradient-to-r from-[#FFF066] via-[#FDE047] to-[#FEF08A] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3 animate-pop-in animate-pulse-glow-gold">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] text-white border-2 border-[#111827] font-display font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
+              {getInitials(incomingInvites[0].fromName)}
+            </div>
+            <div className="min-w-0">
+              <div className="font-display text-sm font-extrabold text-[#111827] truncate">
+                {incomingInvites[0].fromName} invited you to a table!
+              </div>
+              <div className="font-mono text-xs text-[#334155] font-bold truncate">
+                Room {incomingInvites[0].roomCode} · {incomingInvites[0].seatsCount}/
+                {incomingInvites[0].maxPlayers} seats
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={() => handleCycleAvatar(-1)}
-              className="w-7 h-7 rounded-lg bg-[#1C332A] border border-[#345548] text-[#C5D5CC] flex items-center justify-center cursor-pointer active:scale-95"
-              aria-label="Previous character"
+              onClick={() => acceptRoomInvite(incomingInvites[0])}
+              className="px-4 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-blue btn-gloss-sheen cursor-pointer"
             >
-              <ChevronLeft className="w-3.5 h-3.5" />
+              Join
             </button>
-
             <button
               type="button"
-              onClick={handleTapCharacter}
-              className={`relative rounded-full cursor-pointer ${
-                cheering ? 'animate-character-cheer' : 'animate-character-idle'
-              }`}
-              aria-label={`Interact with ${currentAvatar.name}`}
+              onClick={() => declineRoomInvite(incomingInvites[0].id)}
+              className="p-1.5 rounded-xl bg-white border-2 border-[#111827] text-[#475569] hover:text-[#E11D48] cursor-pointer"
+              aria-label="Dismiss invite"
             >
-              <PlayerAvatar
-                avatarId={profile.avatarId}
-                frameId={profile.avatarFrame}
-                size="md"
-                alt={profile.displayName}
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Responsive Layout: Single crisp column on mobile, clean 12-col split on desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* LEFT / PRIMARY COLUMN (7 cols on desktop): Hero Card + More Ways to Play */}
+        <div className="lg:col-span-7 space-y-5">
+          {/* TOP HERO CARD: Vivid Animated AAA Game Showcase + Play with friends */}
+          <section className="studio-card rounded-3xl p-4 sm:p-5 space-y-4">
+            {/* Illustrated Board Showcase (~Top 1/3rd on Mobile) with Animated Graphic Overlays */}
+            <div className="relative rounded-2xl overflow-hidden border-2 border-[#111827] bg-gradient-to-br from-[#38BDF8] via-[#60A5FA] to-[#FACC15] h-[24dvh] min-h-[168px] max-h-[240px] shadow-[inset_0_2px_0_rgba(255,255,255,0.6)]">
+              <img
+                src={HERO_STUDIO_BOARD_IMAGE}
+                alt="Ludo Crown Festive Arcade Tabletop Board"
+                draggable={false}
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover object-center select-none animate-art-breathe"
               />
-            </button>
 
-            <button
-              type="button"
-              onClick={() => handleCycleAvatar(1)}
-              className="w-7 h-7 rounded-lg bg-[#1C332A] border border-[#345548] text-[#C5D5CC] flex items-center justify-center cursor-pointer active:scale-95"
-              aria-label="Next character"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-1.5">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <Crown className="w-4 h-4 text-[#EAB957] shrink-0" />
-                <h1 className="font-display text-base font-extrabold tracking-tight text-white truncate">
-                  LUDO CROWN
-                </h1>
-              </div>
-              <span className="text-[10px] font-mono font-bold text-[#EAB957] shrink-0">
-                LV.{profile.level}
-              </span>
-            </div>
-
-            <div
-              key={speechLine}
-              className="mt-0.5 text-[11px] font-medium text-[#FEF08A] truncate animate-pop-in"
-            >
-              “{speechLine}”
-            </div>
-
-            <div className="mt-1.5 flex items-center gap-2">
-              <div className="flex-1 h-1.5 rounded-full bg-[#0A1410] overflow-hidden">
-                <div className="h-full bg-[#EAB957]" style={{ width: `${xpPct}%` }} />
-              </div>
-              <span className="text-[10px] font-mono tabular-nums text-[#A6BBB0] shrink-0">
-                {LEAGUE_META[profile.league].name.split(' ')[0]} · {profile.elo}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* 5-Icon Interactive Mobile Retention Dock */}
-        <div className="shrink-0 grid grid-cols-5 gap-1.5">
-          <button
-            type="button"
-            onClick={() => (dailyChestReady ? claimDailyStreak() : setActiveTab('rewards'))}
-            className={`rounded-xl py-2 px-1 border text-center active:scale-95 transition-transform cursor-pointer ${
-              dailyChestReady
-                ? 'bg-[#2B1F0A] border-[#EAB957] animate-chest-wiggle'
-                : 'bg-[#14251E]/90 border-[#2D4A3E]'
-            }`}
-          >
-            <Gift className="w-4 h-4 text-[#EAB957] mx-auto" />
-            <div className="mt-1 font-display text-[10px] font-bold text-white leading-none truncate">
-              {dailyChestReady ? 'Claim!' : 'Chest'}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenWheel}
-            className="rounded-xl py-2 px-1 bg-[#241E30]/95 border border-[#754E8F] text-center active:scale-95 transition-transform cursor-pointer"
-          >
-            <Sparkles className="w-4 h-4 text-[#D4B2E8] mx-auto" />
-            <div className="mt-1 font-display text-[10px] font-bold text-white leading-none truncate">
-              Spin
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (isSignedIn) refreshOpenRooms().catch(() => {});
-              setTablesSheetOpen(true);
-            }}
-            className="rounded-xl py-2 px-1 bg-[#14251E]/90 border border-[#2D4A3E] text-center active:scale-95 transition-transform cursor-pointer"
-          >
-            <Globe className="w-4 h-4 text-[#60A5FA] mx-auto" />
-            <div className="mt-1 font-display text-[10px] font-bold text-white leading-none truncate">
-              Tables{openRooms.length > 0 ? ` (${openRooms.length})` : ''}
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSkinsSheetOpen(true)}
-            className="rounded-xl py-2 px-1 bg-[#14251E]/90 border border-[#2D4A3E] text-center active:scale-95 transition-transform cursor-pointer"
-          >
-            <Palette className="w-4 h-4 text-[#EAB957] mx-auto" />
-            <div className="mt-1 font-display text-[10px] font-bold text-white leading-none truncate">
-              Skins
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              triggerRewardedAd('daily_bonus_coins', () => {
-                showToast('+250 Coins credited!', 'success');
-              })
-            }
-            className="rounded-xl py-2 px-1 bg-[#0E2E2B]/95 border border-[#10B981] text-center active:scale-95 transition-transform cursor-pointer"
-          >
-            <Play className="w-4 h-4 text-[#34D399] mx-auto" />
-            <div className="mt-1 font-display text-[10px] font-bold text-white leading-none truncate">
-              +250
-            </div>
-          </button>
-        </div>
-
-        {/* Compact 1-Row Quick Match Rules Bar */}
-        <div className="shrink-0 grid grid-cols-3 gap-1.5 p-1.5 rounded-2xl bg-[#0C1814]/95 border border-[#274136]">
-          <div className="grid grid-cols-2 gap-1">
-            {([2, 4] as const).map((cnt) => (
-              <button
-                key={cnt}
-                type="button"
-                onClick={() => setPlayerCount(cnt)}
-                className={`py-1.5 rounded-lg text-[11px] font-display font-bold cursor-pointer transition-colors ${
-                  playerCount === cnt
-                    ? 'bg-[#EAB957] text-[#1A1000]'
-                    : 'bg-[#1A2F26] text-[#CBD5E1]'
-                }`}
-              >
-                {cnt}P
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-2 gap-1">
-            {(['quick', 'classic'] as GameMode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={`py-1.5 rounded-lg text-[11px] font-display font-bold capitalize cursor-pointer transition-colors ${
-                  mode === m
-                    ? 'bg-[#34D399] text-[#052E16]'
-                    : 'bg-[#1A2F26] text-[#CBD5E1]'
-                }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-3 gap-1">
-            {([100, 250, 500] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStake(s)}
-                className={`py-1.5 rounded-lg text-[10px] font-mono font-bold cursor-pointer transition-colors ${
-                  stake === s
-                    ? 'bg-[#60A5FA] text-[#081233]'
-                    : 'bg-[#1A2F26] text-[#CBD5E1]'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Hero 2x2 Tactile 3D Arcade Play Tiles */}
-        <div className="flex-1 grid grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            disabled={busyAction !== null}
-            onClick={handleQuickOnline}
-            className="rounded-2xl p-3.5 text-left game-btn-green cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[104px] h-full"
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-9 h-9 rounded-xl bg-black/15 flex items-center justify-center">
-                <Globe className="w-5 h-5" />
-              </div>
-              <span className="font-mono text-[11px] font-bold opacity-85">{playerCount}P LIVE</span>
-            </div>
-            <div>
-              <div className="font-display text-base sm:text-lg font-extrabold leading-tight">
-                {busyAction === 'online' ? 'MATCHING...' : 'PLAY ONLINE'}
-              </div>
-              <div className="text-[11px] font-semibold opacity-85 mt-0.5 truncate">
-                {isSignedIn ? `Win ${(stake * playerCount).toLocaleString()} Coins` : 'Google Sync'}
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() =>
-              launchOfflinePractice({
-                mode,
-                playerCount,
-                difficulty: aiDifficulty,
-              })
-            }
-            className="rounded-2xl p-3.5 text-left game-btn-gold cursor-pointer flex flex-col justify-between min-h-[104px] h-full"
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-9 h-9 rounded-xl bg-black/15 flex items-center justify-center">
-                <Cpu className="w-5 h-5" />
-              </div>
-              <span className="font-mono text-[10px] font-bold uppercase opacity-85">
-                {aiDifficulty}
-              </span>
-            </div>
-            <div>
-              <div className="font-display text-base sm:text-lg font-extrabold leading-tight">
-                VS COMPUTER
-              </div>
-              <div className="text-[11px] font-semibold opacity-85 mt-0.5 truncate">
-                Instant Offline Play
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFriendsModalOpen(true)}
-            className="rounded-2xl p-3.5 text-left game-btn-blue cursor-pointer flex flex-col justify-between min-h-[104px] h-full"
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
-                <Users className="w-5 h-5" />
-              </div>
-              <span className="font-mono text-[11px] font-bold opacity-90">CODE</span>
-            </div>
-            <div>
-              <div className="font-display text-base sm:text-lg font-extrabold leading-tight">
-                PLAY FRIENDS
-              </div>
-              <div className="text-[11px] font-semibold opacity-90 mt-0.5 truncate">
-                Host or Join Room
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('tournaments')}
-            className="rounded-2xl p-3.5 text-left game-btn-purple cursor-pointer flex flex-col justify-between min-h-[104px] h-full"
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
-                <Trophy className="w-5 h-5" />
-              </div>
-              <span className="font-mono text-[11px] font-bold opacity-90">
-                {wallet.freeTournamentTickets} PASS
-              </span>
-            </div>
-            <div>
-              <div className="font-display text-base sm:text-lg font-extrabold leading-tight">
-                TOURNAMENTS
-              </div>
-              <div className="text-[11px] font-semibold opacity-90 mt-0.5 truncate">
-                Knockout Cups
-              </div>
-            </div>
-          </button>
-        </div>
-
-        {/* Bottom Utility Strip */}
-        <div className="shrink-0 flex items-center justify-between gap-2 px-1">
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] font-semibold text-[#A6BBB0] mr-1">AI:</span>
-            {(['casual', 'tactical', 'grandmaster'] as AiDifficulty[]).map((lvl) => (
-              <button
-                key={lvl}
-                type="button"
-                onClick={() => setAiDifficulty(lvl)}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold capitalize cursor-pointer transition-colors ${
-                  aiDifficulty === lvl
-                    ? 'bg-[#EAB957] text-[#1A1000]'
-                    : 'bg-[#14251E] text-[#94A3B8] border border-[#274136]'
-                }`}
-              >
-                {lvl === 'grandmaster' ? 'Master' : lvl}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenAdPolicy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[#14261F] border border-[#325245] text-[10px] font-semibold text-[#A6BBB0] hover:text-white cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <ShieldCheck className="w-3.5 h-3.5 text-[#34D399]" />
-            AdMob
-          </button>
-        </div>
-      </div>
-
-      {/* DESKTOP GAME LOBBY STAGE (lg:): Full Presence, Safely Accessible on Short Windows */}
-      <div className="hidden lg:grid min-h-full w-full max-w-[1260px] mx-auto px-6 py-4 grid-cols-12 gap-5 items-center">
-        <div className="col-span-3 flex flex-col gap-3.5">
-          <div className="rounded-3xl bg-[#14251E]/90 border-2 border-[#2E4C40] p-4 text-center shadow-xl">
-            <div className="min-h-[32px] flex items-center justify-center mb-1.5">
+              {/* Rotating Sunlit Radial Burst Overlay */}
               <div
-                key={speechLine}
-                className="px-3 py-1 rounded-xl bg-[#213B30] border border-[#456C5C] text-xs font-medium text-[#FEF08A] animate-pop-in"
+                aria-hidden="true"
+                className="pointer-events-none absolute -inset-[45%] opacity-35 mix-blend-soft-light animate-sun-spin"
+                style={{
+                  background:
+                    'repeating-conic-gradient(from 0deg, rgba(255,255,255,0.9) 0deg 14deg, transparent 14deg 28deg)',
+                }}
+              />
+
+              {/* Glossy Diagonal Shine Sweep */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent animate-shine-sweep"
+              />
+
+              {/* Subtle Bottom Rim Gradient for Crisp Overlay Pop */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-[#0F172A]/25 to-transparent"
+              />
+
+              {/* Twinkling Golden Graphic Star Overlays */}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 36 36"
+                className="pointer-events-none absolute top-11 left-5 w-6 h-6 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
               >
-                {speechLine}
+                <path
+                  d="M18 2 L22 14 L34 18 L22 22 L18 34 L14 22 L2 18 L14 14 Z"
+                  fill="#FFF066"
+                  stroke="#111827"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 36 36"
+                className="pointer-events-none absolute top-4 left-[44%] w-5 h-5 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
+                style={{ animationDelay: '0.9s' }}
+              >
+                <path
+                  d="M18 2 L22 14 L34 18 L22 22 L18 34 L14 22 L2 18 L14 14 Z"
+                  fill="#FFFFFF"
+                  stroke="#1D4ED8"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 36 36"
+                className="pointer-events-none absolute bottom-12 right-16 w-5 h-5 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
+                style={{ animationDelay: '1.5s' }}
+              >
+                <path
+                  d="M18 2 L22 14 L34 18 L22 22 L18 34 L14 22 L2 18 L14 14 Z"
+                  fill="#FFE033"
+                  stroke="#B45309"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+
+              {/* Animated Brand Crown Badge Top-Left */}
+              <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-b from-[#FFF066] to-[#FACC15] border-2 border-[#111827] shadow-[0_3px_0_#111827]">
+                <Crown className="w-3.5 h-3.5 text-[#E11D48] fill-[#E11D48] animate-badge-bob" />
+                <span className="font-display text-xs font-black tracking-tight text-[#111827]">
+                  LUDO CROWN
+                </span>
+              </div>
+
+              {/* Match Options Trigger Top-Right */}
+              <button
+                type="button"
+                onClick={() => setOptionsModalOpen(true)}
+                className="absolute top-3 right-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/95 hover:bg-[#FEF08A] border-2 border-[#111827] shadow-[0_3px_0_#111827] text-[11px] font-display font-extrabold text-[#111827] cursor-pointer transition-colors"
+                title="Change Rules, Players & Stake"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-[#2563EB]" />
+                <span>
+                  {playerCount}P · {mode === 'quick' ? 'Quick' : 'Classic'}
+                </span>
+              </button>
+
+              {/* Playful Bouncing 3D Corner Die Bottom-Right */}
+              <div
+                aria-hidden="true"
+                className="absolute bottom-2.5 right-2.5 w-11 h-11 rounded-xl bg-gradient-to-br from-white via-[#FFFDF5] to-[#E0F2FE] border-2 border-[#111827] shadow-[0_4px_0_#111827] grid grid-cols-3 grid-rows-3 p-1.5 gap-0.5 animate-die-hop"
+              >
+                <span className="w-2 h-2 rounded-full bg-[#2563EB] self-center justify-self-center" />
+                <span />
+                <span className="w-2 h-2 rounded-full bg-[#10B981] self-center justify-self-center" />
+                <span />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#FF2E54] self-center justify-self-center shadow-xs" />
+                <span />
+                <span className="w-2 h-2 rounded-full bg-[#F59E0B] self-center justify-self-center" />
+                <span />
+                <span className="w-2 h-2 rounded-full bg-[#2563EB] self-center justify-self-center" />
               </div>
             </div>
 
-            <div className="flex items-center justify-center gap-2.5 my-1.5">
-              <button
-                type="button"
-                onClick={() => handleCycleAvatar(-1)}
-                className="w-8 h-8 rounded-xl bg-[#1C332A] border border-[#345548] text-[#C5D5CC] hover:text-white flex items-center justify-center cursor-pointer"
-                aria-label="Previous character"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={handleTapCharacter}
-                className={`relative rounded-full p-1 cursor-pointer ${
-                  cheering ? 'animate-character-cheer' : 'animate-character-idle'
-                }`}
-                aria-label={`Interact with ${currentAvatar.name}`}
-              >
-                <PlayerAvatar
-                  avatarId={profile.avatarId}
-                  frameId={profile.avatarFrame}
-                  size="lg"
-                  alt={profile.displayName}
-                  className="w-20 h-20 shadow-2xl shadow-black/50"
-                />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleCycleAvatar(1)}
-                className="w-8 h-8 rounded-xl bg-[#1C332A] border border-[#345548] text-[#C5D5CC] hover:text-white flex items-center justify-center cursor-pointer"
-                aria-label="Next character"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+            {/* Play with friends Heading + Private Pill */}
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <h1 className="font-display text-2xl font-extrabold text-[#111827] tracking-tight">
+                  Play with friends
+                </h1>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gradient-to-b from-[#DCFCE7] to-[#A7F3D0] border-2 border-[#059669] text-[11px] font-display font-extrabold text-[#065F46] shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
+                  Private
+                </span>
+              </div>
+              <p className="text-sm text-[#475569] mt-1">
+                Host a private 2 to 4 player table, invite your squad, or join by room code.
+              </p>
             </div>
 
-            <div className="mt-1.5 font-display text-base font-bold text-white truncate">
-              {profile.displayName}
+            {/* Primary Dual Buttons: Create room (Glossy Sky-Blue) + Join code (Sunburst Gold) */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={handleCreatePrivate}
+                className="py-3 px-3 rounded-2xl game-btn-blue btn-gloss-sheen font-display font-extrabold text-sm inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <PlusSquare className="w-4 h-4 shrink-0" />
+                <span>{busyAction === 'private' ? 'Creating...' : 'Create room'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => setJoinModalOpen(true)}
+                className="py-3 px-3 rounded-2xl game-btn-gold btn-gloss-sheen font-display font-extrabold text-sm inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                <KeyRound className="w-4 h-4 shrink-0" />
+                <span>Join code</span>
+              </button>
             </div>
-            <div className="text-xs text-[#A6BBB0]">
-              {LEAGUE_META[profile.league].name} · ELO{' '}
-              <span className="font-mono tabular-nums text-[#EAB957] font-semibold">
-                {profile.elo}
+          </section>
+
+          {/* MORE WAYS TO PLAY: 3 Vibrant Illustrated Tactile Mode Cards */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-extrabold text-[#111827]">
+                More ways to play
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full bg-white/90 border border-[#CBD5E1] text-[11px] font-display font-extrabold text-[#1D4ED8]">
+                3 modes
               </span>
             </div>
 
-            <div className="mt-2.5 px-1">
-              <div className="flex items-center justify-between text-[11px] text-[#9BB0A5] font-mono tabular-nums mb-1">
-                <span>LV. {profile.level}</span>
-                <span>{xpIntoLevel}/250 XP</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-[#0A1410] overflow-hidden">
-                <div className="h-full bg-[#EAB957]" style={{ width: `${xpPct}%` }} />
-              </div>
-            </div>
-          </div>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => handleQuickOnlineMode(4)}
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[132px]"
+              >
+                <div className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#FF2E54] animate-badge-bob">
+                  <img
+                    src={MODE_QUICK4P_IMAGE}
+                    alt="Quick 4P"
+                    draggable={false}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover scale-[1.15] group-hover:scale-[1.24] transition-transform duration-200"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
+                  />
+                </div>
+                <div className="mt-3">
+                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                    {busyAction === 'quick4' ? 'Matching...' : 'Quick 4P'}
+                  </div>
+                  <div className="text-[11px] font-bold text-[#BE123C] mt-0.5">Fast online</div>
+                </div>
+              </button>
 
-          <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => handleQuickOnlineMode(2)}
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[132px]"
+              >
+                <div
+                  className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob"
+                  style={{ animationDelay: '0.45s' }}
+                >
+                  <img
+                    src={MODE_DUEL1V1_IMAGE}
+                    alt="1v1 Duel"
+                    draggable={false}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover scale-[1.12] group-hover:scale-[1.22] transition-transform duration-200"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
+                  />
+                </div>
+                <div className="mt-3">
+                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                    {busyAction === 'duel2' ? 'Matching...' : '1v1 Duel'}
+                  </div>
+                  <div className="text-[11px] font-bold text-[#047857] mt-0.5">Head to head</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  launchOfflinePractice({
+                    mode,
+                    playerCount,
+                    difficulty: aiDifficulty,
+                  })
+                }
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[132px]"
+              >
+                <div
+                  className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#2563EB] animate-badge-bob"
+                  style={{ animationDelay: '0.9s' }}
+                >
+                  <img
+                    src={MODE_VSBOT_IMAGE}
+                    alt="VS Computer"
+                    draggable={false}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover scale-[1.15] group-hover:scale-[1.24] transition-transform duration-200"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
+                  />
+                </div>
+                <div className="mt-3">
+                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                    VS Computer
+                  </div>
+                  <div className="text-[11px] font-bold text-[#1D4ED8] mt-0.5">Play offline</div>
+                </div>
+              </button>
+            </div>
+          </section>
+
+          {/* Compact Vivid Bonus & Cups Strip */}
+          <section className="grid grid-cols-4 gap-2.5">
             <button
               type="button"
               onClick={() => (dailyChestReady ? claimDailyStreak() : setActiveTab('rewards'))}
-              className={`rounded-2xl p-3 border-2 text-center transition-transform active:scale-95 cursor-pointer ${
+              className={`rounded-2xl p-2.5 border-2 border-[#111827] shadow-[0_4px_0_#111827] text-center cursor-pointer transition-transform hover:-translate-y-0.5 active:translate-y-0.5 flex flex-col items-center justify-center ${
                 dailyChestReady
-                  ? 'bg-[#2B1F0A] border-[#EAB957] animate-chest-wiggle'
-                  : 'bg-[#14251E]/90 border-[#2D4A3E] hover:border-[#3D5EC2]'
+                  ? 'bg-gradient-to-b from-[#FFF599] to-[#FDE047] animate-chest-wiggle'
+                  : 'bg-gradient-to-b from-[#FFFDF0] to-[#FEF9C3]'
               }`}
             >
-              <Gift className="w-5 h-5 text-[#EAB957] mx-auto" />
-              <div className="mt-1 font-display text-xs font-bold text-white">Daily Chest</div>
-              <div className="text-[10px] text-[#FDE68A]">
-                {dailyChestReady ? 'Tap to Open!' : `Day ${wallet.dailyStreak} Done`}
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-[#FFE84D] to-[#F59E0B] border-2 border-[#111827] flex items-center justify-center text-[#111827] shadow-xs">
+                <Gift className="w-4 h-4" />
               </div>
+              <span className="mt-1.5 font-display text-[11px] font-extrabold text-[#111827] truncate">
+                {dailyChestReady ? 'Claim Gift' : 'Daily Gift'}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={onOpenWheel}
-              className="rounded-2xl p-3 bg-[#241E30]/95 border-2 border-[#754E8F] hover:border-[#A78BFA] text-center transition-transform active:scale-95 cursor-pointer"
+              className="rounded-2xl p-2.5 bg-gradient-to-b from-[#FFF1F5] to-[#FFE4EC] border-2 border-[#111827] shadow-[0_4px_0_#111827] text-center cursor-pointer transition-transform hover:-translate-y-0.5 active:translate-y-0.5 flex flex-col items-center justify-center"
             >
-              <Sparkles className="w-5 h-5 text-[#D4B2E8] mx-auto" />
-              <div className="mt-1 font-display text-xs font-bold text-white">Lucky Spin</div>
-              <div className="text-[10px] text-[#DDD6FE]">Win 1,000 Coins</div>
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] border-2 border-[#111827] flex items-center justify-center text-white shadow-xs">
+                <Sparkles className="w-4 h-4 animate-wheel-spin-idle" />
+              </div>
+              <span className="mt-1.5 font-display text-[11px] font-extrabold text-[#111827] truncate">
+                Lucky Spin
+              </span>
             </button>
 
             <button
               type="button"
-              onClick={() => setActiveTab('rewards')}
-              className="rounded-2xl p-3 bg-[#14251E]/90 border-2 border-[#2D4A3E] hover:border-[#3D5EC2] text-center transition-transform active:scale-95 cursor-pointer"
+              onClick={() => setActiveTab('tournaments')}
+              className="rounded-2xl p-2.5 bg-gradient-to-b from-[#EFF8FF] to-[#DBEAFE] border-2 border-[#111827] shadow-[0_4px_0_#111827] text-center cursor-pointer transition-transform hover:-translate-y-0.5 active:translate-y-0.5 flex flex-col items-center justify-center"
             >
-              <Flame className="w-5 h-5 text-[#FB7185] mx-auto" />
-              <div className="mt-1 font-display text-xs font-bold text-white">Missions</div>
-              <div className="text-[10px] text-[#FDA4AF]">
-                {claimableChallenges > 0 ? `${claimableChallenges} Ready!` : '4 Quests'}
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-[#38BDF8] to-[#1D4ED8] border-2 border-[#111827] flex items-center justify-center text-white shadow-xs">
+                <Trophy className="w-4 h-4 animate-badge-bob" />
               </div>
+              <span className="mt-1.5 font-display text-[11px] font-extrabold text-[#111827] truncate">
+                Cups ({wallet.freeTournamentTickets})
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() =>
                 triggerRewardedAd('daily_bonus_coins', () => {
-                  showToast('+250 Coins credited to your treasury!', 'success');
+                  showToast('+250 Coins credited!', 'success');
                 })
               }
-              className="rounded-2xl p-3 bg-[#0E2E2B]/95 border-2 border-[#10B981] hover:border-[#34D399] text-center transition-transform active:scale-95 cursor-pointer"
+              className="rounded-2xl p-2.5 bg-gradient-to-b from-[#ECFFF6] to-[#CCFBF1] border-2 border-[#111827] shadow-[0_4px_0_#111827] text-center cursor-pointer transition-transform hover:-translate-y-0.5 active:translate-y-0.5 flex flex-col items-center justify-center"
             >
-              <Play className="w-5 h-5 text-[#34D399] mx-auto" />
-              <div className="mt-1 font-display text-xs font-bold text-white">Free +250</div>
-              <div className="text-[10px] text-[#A7F3D0]">Watch Video</div>
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-[#34F59F] to-[#059669] border-2 border-[#111827] flex items-center justify-center text-white shadow-xs">
+                <Coins className="w-4 h-4" />
+              </div>
+              <span className="mt-1.5 font-display text-[11px] font-extrabold text-[#111827] truncate">
+                +250 Free
+              </span>
             </button>
-          </div>
+          </section>
         </div>
 
-        <div className="col-span-6 rounded-3xl bg-[#14251E]/88 border-2 border-[#325245] p-5 shadow-2xl">
-          <div className="flex flex-col items-center text-center">
-            <svg viewBox="0 0 180 62" className="w-36 h-12" aria-hidden="true">
-              <path
-                d="M66 28 L72 8 L90 20 L108 8 L114 28 Z"
-                fill="#EAB957"
-                stroke="#B45309"
-                strokeWidth="2.5"
-                strokeLinejoin="round"
-              />
-              <rect x="65" y="27" width="50" height="6" rx="3" fill="#FDE68A" stroke="#B45309" strokeWidth="2" />
-              {[
-                { x: 30, fill: '#E11D48', top: '#FB7185' },
-                { x: 68, fill: '#059669', top: '#34D399' },
-                { x: 112, fill: '#D97706', top: '#FBBF24' },
-                { x: 150, fill: '#2563EB', top: '#60A5FA' },
-              ].map((p) => (
-                <g key={p.x}>
-                  <circle cx={p.x} cy="38" r="7.5" fill={p.top} stroke="#FFFFFF" strokeWidth="2" />
-                  <path
-                    d={`M${p.x - 9.5} 58 C${p.x - 9.5} 45 ${p.x + 9.5} 45 ${p.x + 9.5} 58 Z`}
-                    fill={p.fill}
-                    stroke="#FFFFFF"
-                    strokeWidth="2"
-                  />
-                </g>
-              ))}
-            </svg>
-            <h1 className="font-display text-3xl font-extrabold tracking-tight text-white mt-1">
-              LUDO CROWN
-            </h1>
-          </div>
-
-          <div className="mt-3.5 grid grid-cols-3 gap-2 p-2 rounded-2xl bg-[#0C1814] border border-[#274136]">
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-[#94A3B8] text-center">PLAYERS</span>
-              <div className="grid grid-cols-2 gap-1">
-                {([2, 4] as const).map((cnt) => (
-                  <button
-                    key={cnt}
-                    type="button"
-                    onClick={() => setPlayerCount(cnt)}
-                    className={`py-1 rounded-lg text-xs font-display font-bold cursor-pointer transition-colors ${
-                      playerCount === cnt
-                        ? 'bg-[#EAB957] text-[#1A1000]'
-                        : 'bg-[#1A2F26] text-[#CBD5E1] hover:text-white'
-                    }`}
-                  >
-                    {cnt}P
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-[#94A3B8] text-center">RULESET</span>
-              <div className="grid grid-cols-2 gap-1">
-                {(['quick', 'classic'] as GameMode[]).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    className={`py-1 rounded-lg text-xs font-display font-bold capitalize cursor-pointer transition-colors ${
-                      mode === m
-                        ? 'bg-[#34D399] text-[#052E16]'
-                        : 'bg-[#1A2F26] text-[#CBD5E1] hover:text-white'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-[#94A3B8] text-center">STAKE</span>
-              <div className="grid grid-cols-3 gap-1">
-                {([100, 250, 500] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setStake(s)}
-                    className={`py-1 rounded-lg text-[11px] font-mono font-bold cursor-pointer transition-colors ${
-                      stake === s
-                        ? 'bg-[#60A5FA] text-[#081233]'
-                        : 'bg-[#1A2F26] text-[#CBD5E1] hover:text-white'
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              disabled={busyAction !== null}
-              onClick={handleQuickOnline}
-              className="rounded-2xl p-4 text-left game-btn-green cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[108px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-9 h-9 rounded-xl bg-black/15 flex items-center justify-center">
-                  <Globe className="w-5 h-5" />
-                </div>
-                <span className="font-mono text-xs font-bold opacity-85">{playerCount}P LIVE</span>
-              </div>
-              <div className="mt-2">
-                <div className="font-display text-lg font-extrabold leading-tight">
-                  {busyAction === 'online' ? 'MATCHING...' : 'PLAY ONLINE'}
-                </div>
-                <div className="text-xs font-medium opacity-85 mt-0.5">
-                  {isSignedIn ? `Win ${(stake * playerCount).toLocaleString()} Coins` : 'Google Sign-In Sync'}
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() =>
-                launchOfflinePractice({
-                  mode,
-                  playerCount,
-                  difficulty: aiDifficulty,
-                })
-              }
-              className="rounded-2xl p-4 text-left game-btn-gold cursor-pointer flex flex-col justify-between min-h-[108px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-9 h-9 rounded-xl bg-black/15 flex items-center justify-center">
-                  <Cpu className="w-5 h-5" />
-                </div>
-                <span className="font-mono text-xs font-bold uppercase opacity-85">
-                  {aiDifficulty} AI
-                </span>
-              </div>
-              <div className="mt-2">
-                <div className="font-display text-lg font-extrabold leading-tight">
-                  VS COMPUTER
-                </div>
-                <div className="text-xs font-medium opacity-85 mt-0.5">Instant Offline Play</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setFriendsModalOpen(true)}
-              className="rounded-2xl p-4 text-left game-btn-blue cursor-pointer flex flex-col justify-between min-h-[108px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
-                  <Users className="w-5 h-5" />
-                </div>
-                <span className="font-mono text-xs font-bold opacity-90">CODE</span>
-              </div>
-              <div className="mt-2">
-                <div className="font-display text-lg font-extrabold leading-tight">
-                  PLAY FRIENDS
-                </div>
-                <div className="text-xs font-medium opacity-90 mt-0.5">Create or Join Code</div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('tournaments')}
-              className="rounded-2xl p-4 text-left game-btn-purple cursor-pointer flex flex-col justify-between min-h-[108px]"
-            >
-              <div className="flex items-center justify-between">
-                <div className="w-9 h-9 rounded-xl bg-white/15 flex items-center justify-center">
-                  <Trophy className="w-5 h-5" />
-                </div>
-                <span className="font-mono text-xs font-bold opacity-90">
-                  {wallet.freeTournamentTickets} PASS
-                </span>
-              </div>
-              <div className="mt-2">
-                <div className="font-display text-lg font-extrabold leading-tight">
-                  TOURNAMENTS
-                </div>
-                <div className="text-xs font-medium opacity-90 mt-0.5">Knockout Prize Cups</div>
-              </div>
-            </button>
-          </div>
-
-          <div className="mt-3.5 flex items-center justify-between gap-2 pt-3 border-t border-[#274136]">
-            <span className="text-xs font-medium text-[#9BB0A5]">Offline Bot Skill:</span>
-            <div className="flex items-center gap-1.5">
-              {(['casual', 'tactical', 'grandmaster'] as AiDifficulty[]).map((lvl) => (
-                <button
-                  key={lvl}
-                  type="button"
-                  onClick={() => setAiDifficulty(lvl)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize cursor-pointer transition-colors ${
-                    aiDifficulty === lvl
-                      ? 'bg-[#EAB957] text-[#1A1000]'
-                      : 'bg-[#0C1814] text-[#94A3B8] hover:text-white border border-[#274136]'
-                  }`}
-                >
-                  {lvl}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="col-span-3 flex flex-col gap-3.5">
-          <div className="rounded-3xl bg-[#14251E]/90 border-2 border-[#2E4C40] p-4 shadow-xl">
-            <div className="flex items-center justify-between mb-2.5">
+        {/* RIGHT / SECONDARY COLUMN (5 cols on desktop): Friends online + Live Open Tables */}
+        <div className="lg:col-span-5 space-y-5">
+          {/* FRIENDS ONLINE SECTION (Matches Image 1 Bottom) */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Crown className="w-4 h-4 text-[#EAB957]" />
-                <h2 className="font-display text-sm font-bold text-white">Live Open Tables</h2>
+                <h2 className="font-display text-lg font-extrabold text-[#111827]">
+                  Friends online
+                </h2>
+                <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#E11D48] text-white text-xs font-mono font-extrabold border border-[#111827]">
+                  {acceptedFriends.length}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('friends')}
+                className="text-xs font-display font-extrabold text-[#1D4ED8] hover:underline cursor-pointer"
+              >
+                See all
+              </button>
+            </div>
+
+            {!isSignedIn ? (
+              <div className="studio-card-soft rounded-3xl p-4 text-center space-y-2.5">
+                <p className="text-xs text-[#475569]">
+                  Sign in with Google to add friends and send instant room invites.
+                </p>
+                <button
+                  type="button"
+                  onClick={signInWithGoogle}
+                  className="px-4 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer"
+                >
+                  Sign In with Google
+                </button>
+              </div>
+            ) : acceptedFriends.length === 0 ? (
+              <div className="studio-card-soft rounded-3xl p-4 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-display text-sm font-extrabold text-[#111827]">
+                    Invite your squad
+                  </div>
+                  <div className="text-xs text-[#64748B]">
+                    Find players by name or #tag in Friends.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('friends')}
+                  className="px-3.5 py-2 rounded-xl font-display font-extrabold text-xs game-btn-white cursor-pointer shrink-0"
+                >
+                  Add friends
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {acceptedFriends.slice(0, 4).map((f, idx) => {
+                  const isRequester = f.requesterUid === profile.uid;
+                  const friendUid = isRequester ? f.recipientUid : f.requesterUid;
+                  const friendName = isRequester ? f.recipientName : f.requesterName;
+                  const badgeStyle = FRIEND_BADGE_STYLES[idx % FRIEND_BADGE_STYLES.length];
+                  const sending = busyAction === `invite_${friendUid}`;
+                  return (
+                    <div
+                      key={f.id}
+                      className="studio-card-soft hover:border-[#111827] transition-colors rounded-2xl px-3.5 py-3 flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative shrink-0">
+                          <div
+                            className={`w-10 h-10 rounded-full border-2 border-[#111827] ${badgeStyle} font-display font-black text-xs flex items-center justify-center`}
+                          >
+                            {getInitials(friendName)}
+                          </div>
+                          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#10E587] border-2 border-white animate-pulse" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-display text-sm font-extrabold text-[#111827] truncate">
+                            {friendName}
+                          </div>
+                          <div className="text-xs text-[#64748B] truncate">
+                            {idx % 2 === 0 ? 'In lobby' : 'Ready to roll'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={busyAction !== null}
+                        onClick={() => handleInviteFriend(friendUid, friendName)}
+                        className="px-3.5 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-white inline-flex items-center gap-1 cursor-pointer disabled:opacity-60 shrink-0"
+                      >
+                        <Send className="w-3 h-3 text-[#1D4ED8]" />
+                        {sending ? 'Sending...' : 'Invite'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* OPEN PUBLIC TABLES SECTION */}
+          <section className="studio-card-soft rounded-3xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#1D4ED8]" />
+                <h2 className="font-display text-sm font-extrabold text-[#111827]">
+                  Open public tables
+                </h2>
               </div>
               {isSignedIn && (
                 <button
                   type="button"
                   onClick={() => refreshOpenRooms()}
-                  className="p-1.5 rounded-lg bg-[#1C3229] text-[#A6BBB0] hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#334155] cursor-pointer"
                   aria-label="Refresh open tables"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
@@ -857,333 +633,234 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             </div>
 
             {!isSignedIn ? (
-              <div className="rounded-2xl bg-[#0C1814] border border-[#274136] p-3 text-center">
-                <p className="text-xs text-[#9BB0A5]">
-                  Sign in with Google to join real-time players across devices.
-                </p>
-                <button
-                  type="button"
-                  onClick={signInWithGoogle}
-                  className="mt-2.5 w-full py-2 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer"
-                >
-                  Sign In with Google
-                </button>
-              </div>
+              <p className="text-xs text-[#64748B]">
+                Sign in to browse and join live open public rooms.
+              </p>
             ) : openRooms.length === 0 ? (
-              <div className="rounded-2xl bg-[#0C1814] border border-[#274136] p-3 text-xs text-[#94A3B8] text-center">
-                No waiting tables yet. Tap <strong className="text-white">PLAY ONLINE</strong> to
-                host!
-              </div>
+              <p className="text-xs text-[#64748B]">
+                No public waiting tables right now. Tap <strong>Quick 4P</strong> or{' '}
+                <strong>1v1 Duel</strong> to start one!
+              </p>
             ) : (
               <div className="space-y-2 max-h-[168px] overflow-y-auto no-scrollbar">
                 {openRooms.slice(0, 4).map((room) => (
                   <div
                     key={room.id}
-                    className="p-2 rounded-xl bg-[#0C1814] border border-[#274136] flex items-center justify-between gap-2"
+                    className="px-3 py-2.5 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center justify-between gap-2"
                   >
                     <div className="min-w-0">
-                      <div className="font-mono text-xs font-bold text-[#EAB957]">
+                      <div className="font-mono text-xs font-extrabold text-[#1D4ED8]">
                         {room.roomCode}
                       </div>
-                      <div className="text-[11px] text-[#9BB0A5] truncate">
-                        {room.seats[0]?.name} · {room.seats.length}/{room.maxPlayers}P
+                      <div className="text-[11px] text-[#475569] truncate">
+                        {room.seats[0]?.name} · {room.seats.length}/{room.maxPlayers} seats ·{' '}
+                        {room.mode}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => joinRoom(room.roomCode)}
-                      className="px-3 py-1 rounded-lg font-display font-bold text-xs game-btn-green cursor-pointer shrink-0"
+                      className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer shrink-0"
                     >
-                      JOIN
+                      Join
                     </button>
                   </div>
                 ))}
               </div>
             )}
-          </div>
 
-          <div className="rounded-3xl bg-[#14251E]/90 border-2 border-[#2E4C40] p-4 shadow-xl">
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2">
-                <Palette className="w-4 h-4 text-[#EAB957]" />
-                <h2 className="font-display text-sm font-bold text-white">Board Skin</h2>
-              </div>
+            <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-between">
               <button
                 type="button"
-                onClick={() => setActiveTab('atelier')}
-                className="text-[11px] font-semibold text-[#A6BBB0] hover:text-white cursor-pointer"
+                onClick={() => setOptionsModalOpen(true)}
+                className="text-xs font-bold text-[#475569] hover:text-[#111827] inline-flex items-center gap-1 cursor-pointer"
               >
-                Shop All
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                Stake: {stake} · Bot: {aiDifficulty}
+              </button>
+              <button
+                type="button"
+                onClick={onOpenAdPolicy}
+                className="text-xs font-bold text-[#1D4ED8] hover:underline inline-flex items-center gap-1 cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                Privacy
               </button>
             </div>
-            <div className="grid grid-cols-4 gap-2">
-              {BOARD_THEMES.map((t) => {
-                const active = profile.boardTheme === t.id;
-                const unlocked = t.priceCoins === 0 || wallet.unlockedCosmetics.includes(t.id);
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    title={`${t.name}${unlocked ? '' : ' (Locked - Shop)'}`}
-                    onClick={() => handleQuickBoardSwitch(t.id)}
-                    className={`h-10 rounded-xl border-2 flex items-center justify-center transition-transform active:scale-95 cursor-pointer ${
-                      active
-                        ? 'border-[#EAB957] scale-105'
-                        : 'border-[#2A463B] opacity-80 hover:opacity-100'
-                    }`}
-                    style={{ backgroundColor: t.frameBg }}
-                  >
-                    <span
-                      className="w-4 h-4 rounded-sm border border-white/40"
-                      style={{ backgroundColor: t.swatchHex }}
-                    />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenAdPolicy}
-            className="w-full rounded-2xl bg-[#14261F] border border-[#325245] hover:border-[#60A5FA] p-3 flex items-center justify-between gap-2.5 text-left transition-colors cursor-pointer"
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              <ShieldCheck className="w-5 h-5 text-[#34D399] shrink-0" />
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-white truncate">
-                  AdMob Policy · Android &amp; iOS
-                </div>
-                <div className="text-[11px] text-[#A6BBB0] truncate">
-                  Play Store &amp; App Store Ready
-                </div>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-[#A6BBB0] shrink-0" />
-          </button>
+          </section>
         </div>
       </div>
 
-      {/* Play With Friends Sheet */}
-      {friendsModalOpen && (
+      {/* JOIN BY ROOM CODE MODAL */}
+      {joinModalOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          className="fixed inset-0 z-50 bg-[#0F172A]/45 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="Play With Friends"
+          aria-label="Join room by code"
         >
-          <div className="w-full sm:max-w-md max-h-[90dvh] overflow-y-auto no-scrollbar rounded-t-3xl sm:rounded-3xl bg-[#14251E] border-t-2 sm:border-2 border-[#3D6153] p-5 pb-7 sm:p-6 shadow-2xl animate-pop-in">
-            <div className="w-10 h-1 rounded-full bg-[#3D6153] mx-auto mb-3 sm:hidden" />
-            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#274136]">
-              <div className="flex items-center gap-2.5">
-                <KeyRound className="w-5 h-5 text-[#EAB957]" />
-                <h2 className="font-display text-lg font-bold text-white">Play With Friends</h2>
+          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white border-t-2 sm:border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 pb-7 sm:p-6 animate-pop-in">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-[#1D4ED8]" />
+                <h2 className="font-display text-lg font-extrabold text-[#111827]">
+                  Join by room code
+                </h2>
               </div>
               <button
                 type="button"
-                onClick={() => setFriendsModalOpen(false)}
-                className="p-2 rounded-xl bg-[#1C3229] text-[#C5D5CC] hover:text-white cursor-pointer"
-                aria-label="Close"
+                onClick={() => setJoinModalOpen(false)}
+                className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] hover:border-[#111827] cursor-pointer"
+                aria-label="Close join modal"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="mt-4 space-y-4">
-              <div className="p-3.5 rounded-2xl bg-[#0C1814] border border-[#274136]">
-                <div className="text-xs font-semibold text-[#A6BBB0] mb-2">
-                  Host Private Table ({playerCount}P · {mode})
-                </div>
-                <button
-                  type="button"
-                  disabled={busyAction !== null}
-                  onClick={handleCreatePrivate}
-                  className="w-full py-3 rounded-xl font-display font-bold text-sm game-btn-gold cursor-pointer disabled:opacity-60"
+            <form onSubmit={handleJoinByCode} className="mt-4 space-y-4">
+              <div>
+                <label
+                  htmlFor="room-code-input"
+                  className="block text-xs font-bold text-[#475569] mb-1.5"
                 >
-                  {busyAction === 'private' ? 'Creating Room...' : 'CREATE PRIVATE CODE'}
-                </button>
+                  Enter 6-character table code
+                </label>
+                <input
+                  id="room-code-input"
+                  type="text"
+                  maxLength={6}
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                  placeholder="E.G. K7M4P2"
+                  className="w-full px-4 py-3 rounded-2xl bg-[#F8FAFC] border-2 border-[#111827] font-mono text-lg font-extrabold tracking-[0.2em] text-center text-[#111827] uppercase focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/25"
+                />
               </div>
 
-              <form
-                onSubmit={handleJoinCode}
-                className="p-3.5 rounded-2xl bg-[#0C1814] border border-[#274136] space-y-2.5"
+              <button
+                type="submit"
+                disabled={joinCode.length !== 6 || busyAction !== null}
+                className="w-full py-3 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer disabled:opacity-50"
               >
-                <div className="text-xs font-semibold text-[#A6BBB0]">
-                  Enter Friend’s 6-Character Code
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={joinCode}
-                    onChange={(e) =>
-                      setJoinCode(
-                        e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
-                      )
-                    }
-                    maxLength={6}
-                    placeholder="R7K2M9"
-                    className="flex-1 min-w-0 bg-[#1A2F26] border-2 border-[#325245] rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold tracking-[0.2em] text-white placeholder:text-[#64748B] focus:outline-none focus:border-[#EAB957]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={joinCode.length !== 6 || busyAction !== null}
-                    className="px-5 py-2.5 rounded-xl font-display font-bold text-sm game-btn-green disabled:opacity-45 cursor-pointer whitespace-nowrap"
-                  >
-                    JOIN
-                  </button>
-                </div>
-              </form>
-            </div>
+                {busyAction === 'join' ? 'Joining table...' : 'Join room'}
+              </button>
+            </form>
           </div>
         </div>
       )}
 
-      {/* Mobile Live Open Tables Sheet */}
-      {tablesSheetOpen && (
+      {/* MATCH OPTIONS MODAL (Players, Rules, Stake, Bot Skill) */}
+      {optionsModalOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          className="fixed inset-0 z-50 bg-[#0F172A]/45 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
           role="dialog"
           aria-modal="true"
-          aria-label="Live Open Tables"
+          aria-label="Match options"
         >
-          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[#14251E] border-t-2 sm:border-2 border-[#3D6153] p-5 pb-7 sm:p-6 shadow-2xl animate-pop-in">
-            <div className="w-10 h-1 rounded-full bg-[#3D6153] mx-auto mb-3 sm:hidden" />
-            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#274136]">
+          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white border-t-2 sm:border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 pb-7 sm:p-6 animate-pop-in space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
               <div className="flex items-center gap-2">
-                <Crown className="w-5 h-5 text-[#EAB957]" />
-                <h2 className="font-display text-lg font-bold text-white">Live Open Tables</h2>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {isSignedIn && (
-                  <button
-                    type="button"
-                    onClick={() => refreshOpenRooms()}
-                    className="p-2 rounded-xl bg-[#1C3229] text-[#A6BBB0] hover:text-white cursor-pointer"
-                    aria-label="Refresh tables"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setTablesSheetOpen(false)}
-                  className="p-2 rounded-xl bg-[#1C3229] text-[#C5D5CC] hover:text-white cursor-pointer"
-                  aria-label="Close"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 max-h-[50dvh] overflow-y-auto no-scrollbar">
-              {!isSignedIn ? (
-                <div className="rounded-2xl bg-[#0C1814] border border-[#274136] p-4 text-center">
-                  <p className="text-xs text-[#9BB0A5]">
-                    Sign in with Google to join real-time players on other devices.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={signInWithGoogle}
-                    className="mt-3 w-full py-2.5 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer"
-                  >
-                    Sign In with Google
-                  </button>
-                </div>
-              ) : openRooms.length === 0 ? (
-                <div className="rounded-2xl bg-[#0C1814] border border-[#274136] p-4 text-xs text-[#94A3B8] text-center">
-                  No open tables waiting right now. Tap <strong className="text-white">PLAY ONLINE</strong> to host one!
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {openRooms.map((room) => (
-                    <div
-                      key={room.id}
-                      className="p-3 rounded-2xl bg-[#0C1814] border border-[#274136] flex items-center justify-between gap-2"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-mono text-sm font-bold text-[#EAB957]">
-                          {room.roomCode}
-                        </div>
-                        <div className="text-xs text-[#9BB0A5] truncate">
-                          {room.seats[0]?.name} · {room.seats.length}/{room.maxPlayers}P · {room.mode}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTablesSheetOpen(false);
-                          joinRoom(room.roomCode);
-                        }}
-                        className="px-4 py-2 rounded-xl font-display font-bold text-xs game-btn-green cursor-pointer shrink-0"
-                      >
-                        JOIN
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Mobile Board Skins Sheet */}
-      {skinsSheetOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Quick Board Skins"
-        >
-          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[#14251E] border-t-2 sm:border-2 border-[#3D6153] p-5 pb-7 sm:p-6 shadow-2xl animate-pop-in">
-            <div className="w-10 h-1 rounded-full bg-[#3D6153] mx-auto mb-3 sm:hidden" />
-            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#274136]">
-              <div className="flex items-center gap-2">
-                <Palette className="w-5 h-5 text-[#EAB957]" />
-                <h2 className="font-display text-lg font-bold text-white">Board Skins</h2>
+                <SlidersHorizontal className="w-5 h-5 text-[#1D4ED8]" />
+                <h2 className="font-display text-lg font-extrabold text-[#111827]">
+                  Table settings
+                </h2>
               </div>
               <button
                 type="button"
-                onClick={() => setSkinsSheetOpen(false)}
-                className="p-2 rounded-xl bg-[#1C3229] text-[#C5D5CC] hover:text-white cursor-pointer"
-                aria-label="Close"
+                onClick={() => setOptionsModalOpen(false)}
+                className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] hover:border-[#111827] cursor-pointer"
+                aria-label="Close settings"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2.5">
-              {BOARD_THEMES.map((t) => {
-                const active = profile.boardTheme === t.id;
-                const unlocked = t.priceCoins === 0 || wallet.unlockedCosmetics.includes(t.id);
-                return (
+            <div>
+              <div className="text-xs font-bold text-[#475569] mb-2">Table size (Private & Bot)</div>
+              <div className="grid grid-cols-2 gap-2">
+                {([2, 4] as const).map((cnt) => (
                   <button
-                    key={t.id}
+                    key={cnt}
                     type="button"
-                    onClick={() => handleQuickBoardSwitch(t.id)}
-                    className={`p-3 rounded-2xl border-2 text-left transition-transform active:scale-95 cursor-pointer ${
-                      active
-                        ? 'bg-[#1A2F75] border-[#EAB957]'
-                        : 'bg-[#0C1814] border-[#2A463B]'
+                    onClick={() => setPlayerCount(cnt)}
+                    className={`py-2.5 rounded-xl font-display text-sm font-extrabold cursor-pointer ${
+                      playerCount === cnt
+                        ? 'game-btn-blue'
+                        : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
                     }`}
                   >
-                    <div
-                      className="h-10 rounded-xl border border-white/20 mb-2 flex items-center justify-center"
-                      style={{ backgroundColor: t.frameBg }}
-                    >
-                      <span
-                        className="w-8 h-4 rounded-sm border border-white/40"
-                        style={{ backgroundColor: t.swatchHex }}
-                      />
-                    </div>
-                    <div className="font-display text-xs font-bold text-white truncate">{t.name}</div>
-                    <div className="text-[10px] text-[#A6BBB0] mt-0.5">
-                      {active ? 'Equipped' : unlocked ? 'Tap to Equip' : `${t.priceCoins} Coins (Shop)`}
-                    </div>
+                    {cnt} Players
                   </button>
-                );
-              })}
+                ))}
+              </div>
             </div>
+
+            <div>
+              <div className="text-xs font-bold text-[#475569] mb-2">Rule set</div>
+              <div className="grid grid-cols-2 gap-2">
+                {(['quick', 'classic'] as GameMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    className={`py-2.5 rounded-xl font-display text-sm font-extrabold capitalize cursor-pointer ${
+                      mode === m
+                        ? 'game-btn-gold'
+                        : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                    }`}
+                  >
+                    {m} rules
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-[#475569] mb-2">Online match stake</div>
+              <div className="grid grid-cols-3 gap-2">
+                {([100, 250, 500] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStake(s)}
+                    className={`py-2 rounded-xl font-mono text-xs font-extrabold cursor-pointer ${
+                      stake === s
+                        ? 'game-btn-gold'
+                        : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                    }`}
+                  >
+                    {s} Coins
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-[#475569] mb-2">Computer bot difficulty</div>
+              <div className="grid grid-cols-3 gap-2">
+                {(['casual', 'tactical', 'grandmaster'] as AiDifficulty[]).map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setAiDifficulty(lvl)}
+                    className={`py-2 rounded-xl font-display text-xs font-extrabold capitalize cursor-pointer ${
+                      aiDifficulty === lvl
+                        ? 'game-btn-blue'
+                        : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                    }`}
+                  >
+                    {lvl === 'grandmaster' ? 'Master' : lvl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOptionsModalOpen(false)}
+              className="w-full py-2.5 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

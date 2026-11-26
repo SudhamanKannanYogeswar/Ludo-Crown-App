@@ -10,10 +10,10 @@ interface PlayerAvatarProps {
 }
 
 const SIZE_CLASSES: Record<NonNullable<PlayerAvatarProps['size']>, string> = {
-  xs: 'w-7 h-7 text-[10px]',
-  sm: 'w-9 h-9 text-xs',
-  md: 'w-12 h-12 text-sm',
-  lg: 'w-16 h-16 text-base',
+  xs: 'w-7 h-7',
+  sm: 'w-9 h-9',
+  md: 'w-12 h-12',
+  lg: 'w-16 h-16',
 };
 
 export function PlayerAvatar({
@@ -23,26 +23,32 @@ export function PlayerAvatar({
   alt,
   className = '',
 }: PlayerAvatarProps) {
-  const [imgFailed, setImgFailed] = useState(false);
   const avatar = getAvatarById(avatarId);
   const frame = getAvatarFrameById(frameId);
+  const [imgFailed, setImgFailed] = useState(false);
 
   return (
     <div
-      className={`relative rounded-full overflow-hidden shrink-0 flex items-center justify-center font-display font-semibold text-[#F5F2EB] ${SIZE_CLASSES[size]} ${frame.ringClass} ${className}`}
+      className={`relative rounded-full overflow-hidden shrink-0 flex items-center justify-center shadow-lg ${SIZE_CLASSES[size]} ${frame.ringClass} ${className}`}
       style={{ backgroundColor: avatar.accentBg }}
     >
-      {avatar.imageUrl && !imgFailed ? (
+      {!imgFailed && avatar.imageUrl ? (
         <img
           src={avatar.imageUrl}
           alt={alt || avatar.name}
-          referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
-          className="w-full h-full object-cover"
+          draggable={false}
+          className="w-full h-full object-cover scale-[1.06] select-none"
         />
       ) : (
-        <span aria-label={alt || avatar.name}>{avatar.initials}</span>
+        <span className="font-display font-black text-white text-xs tracking-wide">
+          {avatar.initials}
+        </span>
       )}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-inset ring-white/40"
+      />
     </div>
   );
 }

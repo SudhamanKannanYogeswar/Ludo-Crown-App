@@ -9,166 +9,192 @@ import {
 } from '../types';
 
 export const HERO_TABLE_IMAGE = '/src/assets/images/ludo_hero_table_1795435453121.jpg';
+export const HERO_LOGO_IMAGE = '/src/assets/images/ludo_crown_hero_logo_1795686902070.jpg';
+export const HERO_STUDIO_BOARD_IMAGE = '/src/assets/images/hero_ludo_arcade_1795691143064.jpg';
+export const FRIENDS_TABLE_STUDIO_IMAGE = '/src/assets/images/friends_party_vivid_1795691146610.jpg';
+export const MODE_QUICK4P_IMAGE = '/src/assets/images/mode_quick4p_art_1795691143596.jpg';
+export const MODE_DUEL1V1_IMAGE = '/src/assets/images/mode_duel1v1_art_1795691145509.jpg';
+export const MODE_VSBOT_IMAGE = '/src/assets/images/mode_vsbot_art_1795691146363.jpg';
+export const ICON_ONLINE_IMAGE = '/src/assets/images/icon_play_online_3d_1795687327584.jpg';
+export const ICON_BOT_IMAGE = '/src/assets/images/icon_vs_computer_3d_1795687327766.jpg';
+export const ICON_FRIENDS_IMAGE = '/src/assets/images/icon_play_friends_3d_1795687327143.jpg';
+export const ICON_CUPS_IMAGE = '/src/assets/images/icon_tournaments_3d_1795687330988.jpg';
+export const ICON_CHEST_IMAGE = '/src/assets/images/icon_treasure_chest_3d_1795687347573.jpg';
+export const ICON_WHEEL_IMAGE = '/src/assets/images/icon_lucky_wheel_3d_1795687329444.jpg';
+
+export function formatPlayerTag(uid: string, name?: string): string {
+  const letters = (name || 'LC')
+    .replace(/[^a-zA-Z]/g, '')
+    .toUpperCase()
+    .slice(0, 2)
+    .padEnd(2, 'C');
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) {
+    hash = (hash * 31 + uid.charCodeAt(i)) % 9000;
+  }
+  const num = 1000 + Math.abs(hash);
+  return `#${letters}-${num}`;
+}
 
 export const AVATAR_OPTIONS: AvatarOption[] = [
   {
     id: 'maharaja',
-    name: 'Aarav',
-    title: 'Royal Strategist',
-    imageUrl: '/src/assets/images/avatar_maharaja_1795435453757.jpg',
-    accentBg: '#12382B',
-    initials: 'AR',
+    name: 'Lucky Prince',
+    title: 'Golden Crown Ace',
+    imageUrl: '/src/assets/images/avatar_lucky_prince_3d_1795686907790.jpg',
+    accentBg: '#F5A600',
+    initials: 'LP',
   },
   {
     id: 'voyager',
-    name: 'Elena',
-    title: 'Sapphire Tactician',
-    imageUrl: '/src/assets/images/avatar_voyager_1795435493254.jpg',
-    accentBg: '#172C4B',
-    initials: 'EL',
+    name: 'Star Ace',
+    title: 'Lucky Star Champion',
+    imageUrl: '/src/assets/images/avatar_lucky_ace_3d_1795686912243.jpg',
+    accentBg: '#2588FF',
+    initials: 'SA',
   },
   {
     id: 'empress',
-    name: 'Meera',
-    title: 'Crimson Sovereign',
-    imageUrl: '/src/assets/images/avatar_empress_1795435454642.jpg',
-    accentBg: '#4A181F',
-    initials: 'MR',
+    name: 'Ruby Queen',
+    title: 'Royal Burgundy Sovereign',
+    imageUrl: '/src/assets/images/avatar_lucky_queen_3d_1795686904956.jpg',
+    accentBg: '#D61F48',
+    initials: 'RQ',
   },
   {
     id: 'artisan',
-    name: 'Vikram',
-    title: 'Dice Artisan',
-    imageUrl: '/src/assets/images/avatar_artisan_1795435454675.jpg',
-    accentBg: '#3D2E14',
-    initials: 'VK',
+    name: 'Lucky Lion',
+    title: 'Golden Luck Mascot',
+    imageUrl: '/src/assets/images/avatar_lucky_lion_3d_1795686905730.jpg',
+    accentBg: '#E68A00',
+    initials: 'LL',
   },
 ];
 
 export const BOARD_THEMES: BoardThemeSpec[] = [
   {
     id: 'board_emerald',
-    name: 'Royal Emerald Felt',
-    description: 'Classic tournament baize with warm ivory tracks and brass trim.',
+    name: 'Classic Royal Board',
+    description: 'Crisp pure-white tracks, vivid classic quadrants, and bright gold trim.',
     priceCoins: 0,
     currency: 'coins',
-    frameBg: '#14382A',
-    tileBg: '#F7F3E9',
-    tileBorder: '#D5CBB8',
-    safeBg: '#EAE0C8',
-    centerBg: '#1C2E26',
-    swatchHex: '#1A533D',
+    frameBg: '#1949B8',
+    tileBg: '#FFFFFF',
+    tileBorder: '#B9C8DF',
+    safeBg: '#EFF6FF',
+    centerBg: '#12338C',
+    swatchHex: '#1D63D8',
   },
   {
     id: 'board_walnut',
-    name: 'Walnut Heritage',
-    description: 'Hand-rubbed parlor walnut frame paired with parchment inlays.',
+    name: 'Golden Palace',
+    description: 'Warm sunburst amber bezel with ivory tracks and gilded star zones.',
     priceCoins: 600,
     currency: 'coins',
-    frameBg: '#3A2518',
-    tileBg: '#F4ECDC',
-    tileBorder: '#CBB89D',
-    safeBg: '#E6D4B5',
-    centerBg: '#2C1B12',
-    swatchHex: '#5A3A24',
+    frameBg: '#B45309',
+    tileBg: '#FFFDF7',
+    tileBorder: '#E5CFA3',
+    safeBg: '#FEF3C7',
+    centerBg: '#78350F',
+    swatchHex: '#F59E0B',
   },
   {
     id: 'board_midnight',
-    name: 'Midnight Velvet',
-    description: 'Deep navy salon slate with crisp alabaster squares and silver markers.',
+    name: 'Sapphire Arena',
+    description: 'Tournament sapphire frame with bright alabaster lanes and cool sky stars.',
     priceCoins: 1100,
     currency: 'coins',
-    frameBg: '#101D33',
-    tileBg: '#EEF2F7',
-    tileBorder: '#CBD5E1',
-    safeBg: '#DBE4F0',
-    centerBg: '#0E1729',
-    swatchHex: '#1E3A5F',
+    frameBg: '#0F256E',
+    tileBg: '#F8FBFF',
+    tileBorder: '#BACCEB',
+    safeBg: '#DBEAFE',
+    centerBg: '#0A1A52',
+    swatchHex: '#2563EB',
   },
   {
     id: 'board_marble',
-    name: 'Ivory Marble Salon',
-    description: 'Gallery stone finish with champagne accents for Grandmaster tables.',
+    name: 'Crystal Pearl',
+    description: 'Bright gallery pearl finish with royal amethyst trim for Grandmasters.',
     priceCoins: 25,
     currency: 'gems',
-    frameBg: '#2A2622',
-    tileBg: '#FAF8F5',
-    tileBorder: '#DED7CC',
-    safeBg: '#EFE7D8',
-    centerBg: '#24201C',
-    swatchHex: '#D8CFC0',
+    frameBg: '#5B21B6',
+    tileBg: '#FFFFFF',
+    tileBorder: '#D8CEF2',
+    safeBg: '#F3E8FF',
+    centerBg: '#3B0764',
+    swatchHex: '#8B5CF6',
   },
 ];
 
 export const DICE_THEMES: DiceThemeSpec[] = [
   {
     id: 'dice_ivory',
-    name: 'Carved Ivory',
-    description: 'Traditional satin ivory die with deep charcoal pips.',
+    name: 'Classic Snow',
+    description: 'Bright glossy white die with crisp royal-navy pips.',
     priceCoins: 0,
     currency: 'coins',
-    faceBg: '#FAF6EE',
-    pipColor: '#1C1917',
-    borderColor: '#D6CCB8',
+    faceBg: '#FFFFFF',
+    pipColor: '#132757',
+    borderColor: '#93C5FD',
   },
   {
     id: 'dice_obsidian',
-    name: 'Obsidian Gold',
-    description: 'Matte onyx body inlaid with brushed brass pips.',
+    name: 'Cobalt Star',
+    description: 'Vibrant royal-blue die inlaid with bright snow-white pips.',
     priceCoins: 450,
     currency: 'coins',
-    faceBg: '#18181B',
-    pipColor: '#E5B95C',
-    borderColor: '#524733',
+    faceBg: '#1D4ED8',
+    pipColor: '#FFFFFF',
+    borderColor: '#60A5FA',
   },
   {
     id: 'dice_ruby',
-    name: 'Ruby Lacquer',
-    description: 'Deep carmine enamel finish with crisp pearl pips.',
+    name: 'Ruby Arcade',
+    description: 'Glossy crimson die with crisp white pips.',
     priceCoins: 800,
     currency: 'coins',
-    faceBg: '#881337',
-    pipColor: '#FFF7ED',
-    borderColor: '#BE123C',
+    faceBg: '#E11D48',
+    pipColor: '#FFFFFF',
+    borderColor: '#FDA4AF',
   },
   {
     id: 'dice_jade',
-    name: 'Imperial Jade',
-    description: 'Polished greenstone die reserved for league champions.',
+    name: 'Golden Crown',
+    description: 'Sunlit golden die reserved for league champions.',
     priceCoins: 18,
     currency: 'gems',
-    faceBg: '#0F4C3A',
-    pipColor: '#F3D27A',
-    borderColor: '#2E7D63',
+    faceBg: '#FFCA28',
+    pipColor: '#2B1600',
+    borderColor: '#FEF08A',
   },
 ];
 
 export const AVATAR_FRAMES: AvatarFrameSpec[] = [
   {
     id: 'frame_brass',
-    name: 'Classic Brass',
-    description: 'Clean hairline brass rim for every club player.',
+    name: 'Sunny Gold',
+    description: 'Bright golden rim for every club player.',
     priceCoins: 0,
     currency: 'coins',
-    ringClass: 'ring-2 ring-[#C9A24D]/70',
-    swatchHex: '#C9A24D',
+    ringClass: 'ring-2 ring-[#111827]',
+    swatchHex: '#FACC15',
   },
   {
     id: 'frame_emerald',
-    name: 'Emerald Enamel',
-    description: 'Double-banded jade finish with crisp highlight.',
+    name: 'Emerald Glow',
+    description: 'Vivid green tournament rim with crisp highlight.',
     priceCoins: 400,
     currency: 'coins',
-    ringClass: 'ring-2 ring-[#22C55E] ring-offset-2 ring-offset-[#0E2B21]',
-    swatchHex: '#22C55E',
+    ringClass: 'ring-2 ring-[#10B981] ring-offset-2 ring-offset-white',
+    swatchHex: '#10B981',
   },
   {
     id: 'frame_crimson',
-    name: 'Crimson Crest',
-    description: 'Tournament finalist garnet border.',
+    name: 'Ruby Crest',
+    description: 'Tournament finalist bright crimson border.',
     priceCoins: 750,
     currency: 'coins',
-    ringClass: 'ring-2 ring-[#E11D48] ring-offset-2 ring-offset-[#0E2B21]',
+    ringClass: 'ring-2 ring-[#E11D48] ring-offset-2 ring-offset-white',
     swatchHex: '#E11D48',
   },
   {
@@ -177,8 +203,8 @@ export const AVATAR_FRAMES: AvatarFrameSpec[] = [
     description: 'Signature Grandmaster gold laurel ring.',
     priceCoins: 20,
     currency: 'gems',
-    ringClass: 'ring-[3px] ring-[#F5C95B] ring-offset-2 ring-offset-[#0E2B21]',
-    swatchHex: '#F5C95B',
+    ringClass: 'ring-[3px] ring-[#FACC15] ring-offset-2 ring-offset-white',
+    swatchHex: '#FACC15',
   },
 ];
 
@@ -252,36 +278,36 @@ export const PLAYER_COLOR_META: Record<
   }
 > = {
   red: {
-    label: 'Crimson',
-    fill: '#C93838',
-    dark: '#8C1D1D',
-    light: '#FDE8E8',
-    textOnLight: '#991B1B',
-    ring: '#F87171',
+    label: 'Red',
+    fill: '#EC1C24',
+    dark: '#B50D15',
+    light: '#FFE4E6',
+    textOnLight: '#B91C1C',
+    ring: '#FF6B74',
   },
   green: {
-    label: 'Emerald',
-    fill: '#1E824C',
-    dark: '#115330',
-    light: '#E3F7EC',
-    textOnLight: '#166534',
+    label: 'Green',
+    fill: '#00A844',
+    dark: '#00732C',
+    light: '#DCFCE7',
+    textOnLight: '#15803D',
     ring: '#4ADE80',
   },
   yellow: {
-    label: 'Amber',
-    fill: '#D49A1A',
-    dark: '#8F6408',
-    light: '#FEF6DC',
-    textOnLight: '#92400E',
-    ring: '#FACC15',
+    label: 'Yellow',
+    fill: '#FFD014',
+    dark: '#C99200',
+    light: '#FEF9C3',
+    textOnLight: '#A16207',
+    ring: '#FFE866',
   },
   blue: {
-    label: 'Sapphire',
-    fill: '#2364AA',
-    dark: '#143F6E',
-    light: '#E4F0FC',
-    textOnLight: '#1E40AF',
-    ring: '#60A5FA',
+    label: 'Blue',
+    fill: '#0095EB',
+    dark: '#0062A8',
+    light: '#E0F2FE',
+    textOnLight: '#0369A1',
+    ring: '#60C5FF',
   },
 };
 

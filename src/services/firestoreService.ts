@@ -773,3 +773,196 @@ export async function completeTournamentDoc(
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
+
+// ============================================================================
+// REAL-TIME FRIENDS & ROOM INVITATIONS
+// ============================================================================
+
+export function makeFriendshipId(uidA: string, uidB: string): string {
+  return [uidA, uidB].sort().join('_').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128);
+}
+
+export function subscribeFriendships(
+  uid: string,
+  onData: (items: import('../types').FriendshipDoc[]) => void
+): Unsubscribe {
+  const path = 'friendships';
+  const q = query(collection(db, 'friendships'), where('pairUids', 'array-contains', uid), limit(60));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          pairUids: data.pairUids || [],
+          requesterUid: data.requesterUid,
+          recipientUid: data.recipientUid,
+          requesterName: data.requesterName,
+          requesterAvatarId: data.requesterAvatarId,
+          recipientName: data.recipientName,
+          recipientAvatarId: data.recipientAvatarId,
+          status: data.status,
+          updatedAtMs: data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : Date.now(),
+        } as import('../types').FriendshipDoc;
+      });
+      list.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+      onData(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function sendFriendRequestDoc(
+  me: PlayerProfile,
+  target: PlayerProfile
+): Promise<void> {
+  if (me.uid === target.uid) {
+    throw new Error('You cannot add yourself as a friend.');
+  }
+  const friendshipId = makeFriendshipId(me.uid, target.uid);
+  const path = `friendships/${friendshipId}`;
+  const ref = doc(db, 'friendships', friendshipId);
+  try {
+    const existingSnap = await getDoc(ref);
+    if (existingSnap.exists()) {
+      const existingData = existingSnap.data();
+      if (existingData.status === 'accepted') {
+        throw new Error(`${target.displayName} is already in your squad.`);
+      }
+      if (existingData.recipientUid === me.uid) {
+        await updateDoc(ref, {
+          status: 'accepted',
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      }
+      throw new Error(`Friend request already sent to ${target.displayName}.`);
+    }
+
+    await setDoc(ref, {
+      pairUids: [me.uid, target.uid].sort(),
+      requesterUid: me.uid,
+      recipientUid: target.uid,
+      requesterName: clampString(me.displayName, 32) || 'Player',
+      requesterAvatarId: clampString(me.avatarId, 64) || 'maharaja',
+      recipientName: clampString(target.displayName, 32) || 'Player',
+      recipientAvatarId: clampString(target.avatarId, 64) || 'maharaja',
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('already') || error.message.includes('yourself'))
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function acceptFriendRequestDoc(friendshipId: string): Promise<void> {
+  const path = `friendships/${friendshipId}`;
+  try {
+    await updateDoc(doc(db, 'friendships', friendshipId), {
+      status: 'accepted',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function removeFriendshipDoc(friendshipId: string): Promise<void> {
+  const path = `friendships/${friendshipId}`;
+  try {
+    await deleteDoc(doc(db, 'friendships', friendshipId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export function subscribeIncomingRoomInvites(
+  uid: string,
+  onData: (invites: import('../types').RoomInviteDoc[]) => void
+): Unsubscribe {
+  const path = 'roomInvites';
+  const q = query(collection(db, 'roomInvites'), where('toUid', '==', uid), limit(30));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const invites = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            roomId: data.roomId,
+            roomCode: data.roomCode,
+            fromUid: data.fromUid,
+            fromName: data.fromName,
+            fromAvatarId: data.fromAvatarId,
+            toUid: data.toUid,
+            mode: data.mode,
+            maxPlayers: data.maxPlayers,
+            seatsCount: data.seatsCount,
+            status: data.status,
+            createdAtMs: data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now(),
+          } as import('../types').RoomInviteDoc;
+        })
+        .filter((inv) => inv.status === 'pending' && Date.now() - inv.createdAtMs < 1000 * 60 * 60 * 6);
+      invites.sort((a, b) => b.createdAtMs - a.createdAtMs);
+      onData(invites);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function sendRoomInviteDoc(
+  room: RoomDoc,
+  fromProfile: PlayerProfile,
+  toUid: string
+): Promise<string> {
+  const inviteId = generateDocId('inv');
+  const path = `roomInvites/${inviteId}`;
+  try {
+    await setDoc(doc(db, 'roomInvites', inviteId), {
+      roomId: room.roomCode,
+      roomCode: room.roomCode,
+      fromUid: fromProfile.uid,
+      fromName: clampString(fromProfile.displayName, 32) || 'Player',
+      fromAvatarId: clampString(fromProfile.avatarId, 64) || 'maharaja',
+      toUid,
+      mode: room.mode,
+      maxPlayers: room.maxPlayers,
+      seatsCount: Math.max(1, Math.min(4, room.seats.length)),
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return inviteId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function respondToRoomInviteDoc(
+  inviteId: string,
+  status: 'accepted' | 'declined'
+): Promise<void> {
+  const path = `roomInvites/${inviteId}`;
+  try {
+    await updateDoc(doc(db, 'roomInvites', inviteId), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+

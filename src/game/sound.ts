@@ -158,6 +158,42 @@ class TabletopAudio {
       osc.stop(now + i * 0.06 + 0.18);
     });
   }
+
+  public playTurnReady() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [523.25, 783.99].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.085);
+      gain.gain.setValueAtTime(0.085, now + i * 0.085);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.085 + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.085);
+      osc.stop(now + i * 0.085 + 0.2);
+    });
+  }
+
+  public playSixFanfare() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    [587.33, 739.99, 880, 1174.66].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + i * 0.065);
+      gain.gain.setValueAtTime(0.1, now + i * 0.065);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.065 + 0.22);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.065);
+      osc.stop(now + i * 0.065 + 0.25);
+    });
+  }
 }
 
 export const tabletopAudio = new TabletopAudio();

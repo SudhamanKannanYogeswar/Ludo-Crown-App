@@ -8,6 +8,7 @@ export type AiDifficulty = 'casual' | 'tactical' | 'grandmaster';
 
 export type ActiveTab =
   | 'lobby'
+  | 'friends'
   | 'play'
   | 'tournaments'
   | 'leaderboard'
@@ -200,3 +201,32 @@ export interface MatchSummary {
   turnsPlayed: number;
   doubledWithAd: boolean;
 }
+
+export interface FriendshipDoc {
+  id: string;
+  pairUids: string[];
+  requesterUid: string;
+  recipientUid: string;
+  requesterName: string;
+  requesterAvatarId: string;
+  recipientName: string;
+  recipientAvatarId: string;
+  status: 'pending' | 'accepted';
+  updatedAtMs: number;
+}
+
+export interface RoomInviteDoc {
+  id: string;
+  roomId: string;
+  roomCode: string;
+  fromUid: string;
+  fromName: string;
+  fromAvatarId: string;
+  toUid: string;
+  mode: GameMode;
+  maxPlayers: 2 | 4;
+  seatsCount: number;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAtMs: number;
+}
+

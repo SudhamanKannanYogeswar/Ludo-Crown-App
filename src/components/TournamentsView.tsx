@@ -80,35 +80,35 @@ export function TournamentsView() {
   };
 
   return (
-    <div className="max-w-[1260px] mx-auto px-3 sm:px-6 py-5 space-y-6">
+    <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-5 pb-8 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-white">
-            LEAGUE CUPS &amp; BRACKETS
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight">
+            League Cups
           </h1>
-          <p className="text-xs text-[#A6BBB0] mt-0.5">
-            Enter knockout tournaments with Coins or a Free Ad Ticket.
+          <p className="text-xs text-[#475569] mt-0.5">
+            Enter knockout brackets with Coins or a Free Pass.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() =>
               triggerRewardedAd('free_tournament_ticket', () => {
-                showToast('+1 Free Tournament Ticket earned!', 'success');
+                showToast('+1 Free Tournament Pass earned!', 'success');
               })
             }
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-2xl font-display font-bold text-xs game-btn-green cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-2xl font-display font-extrabold text-xs game-btn-green cursor-pointer"
           >
             <Ticket className="w-4 h-4" />
-            Free Pass (Ad · {wallet.freeTournamentTickets})
+            Free Pass ({wallet.freeTournamentTickets})
           </button>
 
           <button
             type="button"
             onClick={() => setShowCreateForm((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl font-display font-bold text-xs game-btn-gold cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl font-display font-extrabold text-xs game-btn-blue cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             Host Cup
@@ -121,27 +121,30 @@ export function TournamentsView() {
         {TIERS.map((tier) => {
           const meta = LEAGUE_META[tier];
           const isCurrent = profile.league === tier;
+          const active = selectedTier === tier;
           return (
             <button
               key={tier}
               type="button"
               onClick={() => setSelectedTier((prev) => (prev === tier ? 'all' : tier))}
               className={`text-left rounded-2xl p-3.5 border-2 transition-all cursor-pointer ${
-                selectedTier === tier
-                  ? 'bg-[#1D3580] border-[#EAB957]'
+                active
+                  ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
                   : isCurrent
-                    ? 'bg-[#1A2F26] border-[#456C5C]'
-                    : 'bg-[#14251E]/90 border-[#2A463B] hover:border-[#456C5C]'
+                    ? 'bg-[#EFF6FF] border-[#1D4ED8]'
+                    : 'bg-white border-[#CBD5E1] hover:border-[#111827]'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-display text-sm font-bold text-white">{meta.name}</span>
+                <span className="font-display text-sm font-extrabold text-[#111827]">
+                  {meta.name}
+                </span>
                 {isCurrent && (
-                  <span className="text-[10px] font-bold text-[#EAB957]">YOUR TIER</span>
+                  <span className="text-[10px] font-extrabold text-[#1D4ED8]">YOUR TIER</span>
                 )}
               </div>
-              <div className="mt-1.5 text-xs text-[#A6BBB0] font-mono tabular-nums">
-                {meta.minElo}+ ELO · Prize {meta.prizePool.toLocaleString()}
+              <div className="mt-1 text-xs text-[#475569] font-mono tabular-nums">
+                {meta.minElo}+ pts · Prize {meta.prizePool.toLocaleString()}
               </div>
             </button>
           );
@@ -151,25 +154,25 @@ export function TournamentsView() {
       {showCreateForm && (
         <form
           onSubmit={handleCreate}
-          className="rounded-3xl bg-[#14251E]/95 border-2 border-[#3D6153] p-5 grid grid-cols-1 md:grid-cols-4 gap-4 items-end animate-pop-in"
+          className="studio-card rounded-3xl p-5 grid grid-cols-1 md:grid-cols-4 gap-4 items-end animate-pop-in"
         >
           <div className="md:col-span-2">
-            <label className="block text-xs font-semibold text-[#A6BBB0] mb-1.5">Cup Name</label>
+            <label className="block text-xs font-bold text-[#475569] mb-1.5">Cup Name</label>
             <input
               type="text"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
               maxLength={64}
               placeholder="e.g., Friday Night Crown Cup"
-              className="w-full bg-[#0C1814] border border-[#2F4E42] rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-[#64748B] focus:outline-none focus:border-[#EAB957]"
+              className="w-full bg-[#F8FAFC] border-2 border-[#111827] rounded-xl px-3.5 py-2.5 text-sm text-[#111827] placeholder:text-[#94A3B8] focus:outline-none"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-[#A6BBB0] mb-1.5">Tier</label>
+            <label className="block text-xs font-bold text-[#475569] mb-1.5">Tier</label>
             <select
               value={newTier}
               onChange={(e) => setNewTier(e.target.value as LeagueTier)}
-              className="w-full bg-[#0C1814] border border-[#2F4E42] rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#EAB957]"
+              className="w-full bg-[#F8FAFC] border-2 border-[#111827] rounded-xl px-3.5 py-2.5 text-sm text-[#111827] focus:outline-none"
             >
               {TIERS.map((t) => (
                 <option key={t} value={t}>
@@ -182,7 +185,7 @@ export function TournamentsView() {
             <select
               value={newSize}
               onChange={(e) => setNewSize(Number(e.target.value) as 4 | 8)}
-              className="w-20 bg-[#0C1814] border border-[#2F4E42] rounded-xl px-2.5 py-2.5 text-sm text-white"
+              className="w-20 bg-[#F8FAFC] border-2 border-[#111827] rounded-xl px-2.5 py-2.5 text-sm text-[#111827]"
             >
               <option value={4}>4P</option>
               <option value={8}>8P</option>
@@ -190,27 +193,27 @@ export function TournamentsView() {
             <button
               type="submit"
               disabled={creating}
-              className="flex-1 py-2.5 px-4 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer"
+              className="flex-1 py-2.5 px-4 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer"
             >
-              {creating ? 'LAUNCHING...' : 'LAUNCH CUP'}
+              {creating ? 'Launching...' : 'Launch Cup'}
             </button>
           </div>
         </form>
       )}
 
       {!isSignedIn ? (
-        <div className="rounded-3xl bg-[#14251E]/95 border-2 border-[#2E4C40] p-8 text-center">
-          <Trophy className="w-10 h-10 text-[#EAB957] mx-auto" />
-          <h2 className="mt-3 font-display text-xl font-bold text-white">
+        <div className="studio-card rounded-3xl p-8 text-center">
+          <Trophy className="w-10 h-10 text-[#EAB308] mx-auto" />
+          <h2 className="mt-3 font-display text-xl font-extrabold text-[#111827]">
             Sign In to Enter Live Cups
           </h2>
-          <p className="mt-1.5 text-xs text-[#9BB0A5] max-w-sm mx-auto">
+          <p className="mt-1.5 text-xs text-[#475569] max-w-sm mx-auto">
             Connect with Google to join competitive leagues and win prize pools across devices.
           </p>
           <button
             type="button"
             onClick={signInWithGoogle}
-            className="mt-5 px-6 py-3 rounded-2xl font-display font-bold text-sm game-btn-gold cursor-pointer"
+            className="mt-5 px-6 py-3 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer"
           >
             Sign In with Google
           </button>
@@ -219,8 +222,8 @@ export function TournamentsView() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           <div className="lg:col-span-5 space-y-3">
             {filtered.length === 0 ? (
-              <div className="rounded-3xl bg-[#14251E]/90 border-2 border-[#2E4C40] p-6 text-xs text-[#9BB0A5]">
-                No active cups in this league yet. Tap <strong className="text-white">Host Cup</strong> to open one!
+              <div className="studio-card-soft rounded-3xl p-6 text-xs text-[#64748B]">
+                No active cups in this league yet. Tap <strong className="text-[#111827]">Host Cup</strong> to open one!
               </div>
             ) : (
               filtered.map((t) => {
@@ -237,30 +240,30 @@ export function TournamentsView() {
                     }}
                     className={`rounded-2xl p-4 border-2 transition-all cursor-pointer ${
                       selected
-                        ? 'bg-[#1A2F75] border-[#EAB957]'
-                        : 'bg-[#14251E]/90 border-[#2A463B] hover:border-[#456C5C]'
+                        ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                        : 'bg-white border-[#CBD5E1] hover:border-[#111827]'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-display text-sm font-bold text-white truncate">
+                        <div className="font-display text-sm font-extrabold text-[#111827] truncate">
                           {t.title}
                         </div>
-                        <div className="mt-1 text-xs text-[#A6BBB0]">
+                        <div className="mt-1 text-xs text-[#475569]">
                           {LEAGUE_META[t.tier].name} · {t.entrants.length}/{t.maxEntrants}P ·{' '}
-                          <span className="uppercase font-semibold">{t.status}</span>
+                          <span className="uppercase font-bold">{t.status}</span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <div className="font-mono tabular-nums text-sm font-bold text-[#EAB957]">
+                        <div className="font-mono tabular-nums text-sm font-extrabold text-[#1D4ED8]">
                           {t.prizePool.toLocaleString()}
                         </div>
-                        <div className="text-[10px] text-[#94A3B8]">PRIZE</div>
+                        <div className="text-[10px] font-bold text-[#64748B]">PRIZE</div>
                       </div>
                     </div>
-                    <div className="mt-3 pt-2.5 border-t border-[#274136] flex items-center justify-between text-xs">
-                      <span className="text-[#CBD5E1] font-mono">Entry: {t.entryFee}</span>
-                      <span className={enrolled ? 'text-[#34D399] font-bold' : 'text-[#EAB957] font-bold'}>
+                    <div className="mt-3 pt-2.5 border-t border-[#E2E8F0] flex items-center justify-between text-xs">
+                      <span className="text-[#64748B] font-mono">Entry: {t.entryFee}</span>
+                      <span className={enrolled ? 'text-[#047857] font-extrabold' : 'text-[#1D4ED8] font-extrabold'}>
                         {t.status === 'completed'
                           ? `Winner: ${t.winnerName}`
                           : enrolled
@@ -274,21 +277,21 @@ export function TournamentsView() {
             )}
           </div>
 
-          <div className="lg:col-span-7 rounded-3xl bg-[#14251E]/95 border-2 border-[#2E4C40] p-6">
+          <div className="lg:col-span-7 studio-card rounded-3xl p-5 sm:p-6">
             {selectedTournament ? (
               <div className="space-y-5">
-                <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#274136]">
+                <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#E2E8F0]">
                   <div>
-                    <div className="text-xs font-bold text-[#EAB957]">
+                    <div className="text-xs font-extrabold text-[#1D4ED8]">
                       {LEAGUE_META[selectedTournament.tier].name.toUpperCase()} · {selectedTournament.maxEntrants}P KNOCKOUT
                     </div>
-                    <h2 className="mt-1 font-display text-2xl font-extrabold text-white">
+                    <h2 className="mt-1 font-display text-2xl font-extrabold text-[#111827]">
                       {selectedTournament.title}
                     </h2>
                   </div>
                   <div className="text-right">
-                    <div className="text-[11px] text-[#A6BBB0]">Grand Prize</div>
-                    <div className="font-mono tabular-nums text-xl font-bold text-[#EAB957]">
+                    <div className="text-[11px] font-semibold text-[#64748B]">Grand Prize</div>
+                    <div className="font-mono tabular-nums text-xl font-black text-[#111827]">
                       {selectedTournament.prizePool.toLocaleString()} Coins
                     </div>
                   </div>
@@ -296,17 +299,17 @@ export function TournamentsView() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2.5">
-                    <div className="text-xs font-bold text-[#A6BBB0]">BRACKET SEEDS</div>
+                    <div className="text-xs font-extrabold text-[#475569]">BRACKET SEEDS</div>
                     {Array.from({ length: Math.min(4, selectedTournament.maxEntrants) }).map((_, idx) => {
                       const entrant = selectedTournament.entrants[idx];
                       const fallbackBot = BOT_ROSTER[idx % BOT_ROSTER.length];
                       return (
                         <div
                           key={`seed-${idx}`}
-                          className="p-3 rounded-2xl bg-[#0C1814] border border-[#274136] flex items-center justify-between gap-2.5"
+                          className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center justify-between gap-2.5"
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <span className="font-mono text-xs text-[#EAB957] font-bold w-5">
+                            <span className="font-mono text-xs text-[#1D4ED8] font-extrabold w-5">
                               #{idx + 1}
                             </span>
                             <PlayerAvatar
@@ -314,11 +317,11 @@ export function TournamentsView() {
                               size="xs"
                               alt={entrant ? entrant.name : 'Seed'}
                             />
-                            <span className="text-xs font-bold text-white truncate">
+                            <span className="text-xs font-extrabold text-[#111827] truncate">
                               {entrant ? entrant.name : `${fallbackBot.name} (Seed)`}
                             </span>
                           </div>
-                          <span className="font-mono tabular-nums text-[11px] text-[#A6BBB0]">
+                          <span className="font-mono tabular-nums text-[11px] font-bold text-[#64748B]">
                             {entrant ? entrant.elo : fallbackBot.elo}
                           </span>
                         </div>
@@ -326,18 +329,18 @@ export function TournamentsView() {
                     })}
                   </div>
 
-                  <div className="flex flex-col justify-between p-4 rounded-2xl bg-[#0C1814] border border-[#274136]">
+                  <div className="flex flex-col justify-between p-4 rounded-2xl bg-[#EFF6FF] border-2 border-[#111827]">
                     <div>
-                      <div className="text-xs font-bold text-[#A6BBB0]">CHAMPIONSHIP FINAL</div>
+                      <div className="text-xs font-extrabold text-[#1D4ED8]">CHAMPIONSHIP FINAL</div>
                       <div className="mt-4 flex items-center gap-3">
-                        <Award className="w-8 h-8 text-[#EAB957] shrink-0" />
+                        <Award className="w-8 h-8 text-[#EAB308] shrink-0" />
                         <div>
-                          <div className="font-display text-sm font-bold text-white">
+                          <div className="font-display text-sm font-extrabold text-[#111827]">
                             {selectedTournament.status === 'completed'
                               ? selectedTournament.winnerName
                               : 'Crown Trophy + Prize'}
                           </div>
-                          <div className="text-xs text-[#9BB0A5] mt-0.5">
+                          <div className="text-xs text-[#475569] mt-0.5">
                             Win Semifinal &amp; Final to claim the Cup!
                           </div>
                         </div>
@@ -346,7 +349,7 @@ export function TournamentsView() {
 
                     <div className="mt-5 space-y-2.5">
                       {selectedTournament.status === 'completed' ? (
-                        <div className="text-xs font-bold text-[#34D399]">
+                        <div className="text-xs font-extrabold text-[#047857]">
                           Completed · Champion: {selectedTournament.winnerName}
                         </div>
                       ) : selectedTournament.entrantUids.includes(profile.uid) ? (
@@ -354,18 +357,18 @@ export function TournamentsView() {
                           <button
                             type="button"
                             onClick={() => handlePlayBracketMatch(selectedTournament, 'semifinal')}
-                            className="w-full py-2.5 px-4 rounded-xl font-display font-bold text-xs game-btn-blue flex items-center justify-center gap-2 cursor-pointer"
+                            className="w-full py-2.5 px-4 rounded-xl font-display font-extrabold text-xs game-btn-blue flex items-center justify-center gap-2 cursor-pointer"
                           >
                             <Play className="w-3.5 h-3.5" />
-                            PLAY SEMIFINAL
+                            Play Semifinal
                           </button>
                           <button
                             type="button"
                             onClick={() => handlePlayBracketMatch(selectedTournament, 'final')}
-                            className="w-full py-2.5 px-4 rounded-xl font-display font-bold text-xs game-btn-gold flex items-center justify-center gap-2 cursor-pointer"
+                            className="w-full py-2.5 px-4 rounded-xl font-display font-extrabold text-xs game-btn-gold flex items-center justify-center gap-2 cursor-pointer"
                           >
                             <Trophy className="w-3.5 h-3.5" />
-                            PLAY GRAND FINAL
+                            Play Grand Final
                           </button>
                         </>
                       ) : (
@@ -373,16 +376,16 @@ export function TournamentsView() {
                           <button
                             type="button"
                             onClick={() => registerForTournament(selectedTournament, false)}
-                            className="w-full py-2.5 px-4 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer"
+                            className="w-full py-2.5 px-4 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer"
                           >
-                            ENTER · {selectedTournament.entryFee} COINS
+                            Enter · {selectedTournament.entryFee} Coins
                           </button>
                           <button
                             type="button"
                             onClick={() => registerForTournament(selectedTournament, true)}
-                            className="w-full py-2.5 px-4 rounded-xl font-display font-bold text-xs game-btn-green cursor-pointer"
+                            className="w-full py-2.5 px-4 rounded-xl font-display font-extrabold text-xs game-btn-green cursor-pointer"
                           >
-                            USE FREE PASS ({wallet.freeTournamentTickets} LEFT)
+                            Use Free Pass ({wallet.freeTournamentTickets} left)
                           </button>
                         </>
                       )}
@@ -391,7 +394,7 @@ export function TournamentsView() {
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-[#A6BBB0] py-12 text-center">
+              <div className="text-xs text-[#64748B] py-12 text-center">
                 Select or host a cup to view its knockout bracket.
               </div>
             )}

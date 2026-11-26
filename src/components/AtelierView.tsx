@@ -67,14 +67,14 @@ export function AtelierView() {
   };
 
   return (
-    <div className="max-w-[1260px] mx-auto px-3 sm:px-6 py-5 space-y-6">
+    <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-5 pb-8 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-white">
-            CHARACTER &amp; COSMETIC SHOP
+          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#111827] tracking-tight">
+            Profile &amp; Board Shop
           </h1>
-          <p className="text-xs text-[#A6BBB0] mt-0.5">
-            Customize your character portrait, board skins, dice finishes, and royal frames.
+          <p className="text-xs text-[#475569] mt-0.5">
+            Spend Coins &amp; Gems to unlock board editions, dice finishes, and profile frames.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -85,7 +85,7 @@ export function AtelierView() {
                 showToast('+250 Bonus Coins credited!', 'success');
               })
             }
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer whitespace-nowrap"
           >
             <Coins className="w-3.5 h-3.5" />
             <span>+250 Coins (Ad)</span>
@@ -97,7 +97,7 @@ export function AtelierView() {
                 showToast('+5 Bonus Gems credited!', 'success');
               })
             }
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-bold text-xs game-btn-purple cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-extrabold text-xs game-btn-red cursor-pointer whitespace-nowrap"
           >
             <Gem className="w-3.5 h-3.5" />
             <Play className="w-3 h-3" />
@@ -109,14 +109,14 @@ export function AtelierView() {
       {/* Character & Name Selector */}
       <form
         onSubmit={handleSave}
-        className="rounded-3xl bg-[#14251E]/95 border-2 border-[#2E4C40] p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-center"
+        className="studio-card rounded-3xl p-5 grid grid-cols-1 lg:grid-cols-12 gap-5 items-center"
       >
         <div className="lg:col-span-4 flex items-center gap-3.5">
           <div className="animate-character-idle">
             <PlayerAvatar avatarId={avatarId} frameId={avatarFrame} size="lg" alt={displayName} />
           </div>
           <div className="min-w-0 flex-1">
-            <label className="block text-xs font-bold text-[#A6BBB0] mb-1" htmlFor="player-name-input">
+            <label className="block text-xs font-extrabold text-[#475569] mb-1" htmlFor="player-name-input">
               PLAYER NAME
             </label>
             <input
@@ -126,7 +126,7 @@ export function AtelierView() {
               onChange={(e) => setDisplayName(e.target.value)}
               minLength={2}
               maxLength={32}
-              className="w-full bg-[#0C1814] border-2 border-[#2F4E42] rounded-xl px-3 py-2 text-sm font-semibold text-white focus:outline-none focus:border-[#EAB957]"
+              className="w-full bg-[#F8FAFC] border-2 border-[#111827] rounded-xl px-3 py-2 text-sm font-bold text-[#111827] focus:outline-none"
             />
           </div>
         </div>
@@ -141,12 +141,12 @@ export function AtelierView() {
                 onClick={() => setAvatarId(opt.id)}
                 className={`p-2.5 rounded-2xl border-2 text-center cursor-pointer flex flex-col items-center gap-1.5 transition-all ${
                   selected
-                    ? 'bg-[#1D3580] border-[#EAB957]'
-                    : 'bg-[#0C1814] border-[#274136] hover:border-[#456C5C]'
+                    ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                    : 'bg-[#F8FAFC] border-[#CBD5E1] hover:border-[#111827]'
                 }`}
               >
                 <PlayerAvatar avatarId={opt.id} frameId={avatarFrame} size="sm" alt={opt.name} />
-                <div className="font-display text-xs font-bold text-white">{opt.name}</div>
+                <div className="font-display text-xs font-extrabold text-[#111827]">{opt.name}</div>
               </button>
             );
           })}
@@ -156,17 +156,17 @@ export function AtelierView() {
           <button
             type="submit"
             disabled={saving}
-            className="w-full lg:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl font-display font-bold text-xs game-btn-gold whitespace-nowrap cursor-pointer"
+            className="w-full lg:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl font-display font-extrabold text-xs game-btn-blue whitespace-nowrap cursor-pointer"
           >
             <Save className="w-4 h-4" />
-            {saving ? 'SAVING...' : 'SAVE LOOK'}
+            {saving ? 'Saving...' : 'Save Look'}
           </button>
         </div>
       </form>
 
       {/* Board Skins */}
       <section className="space-y-3">
-        <h2 className="font-display text-lg font-bold text-white">Board Skins</h2>
+        <h2 className="font-display text-lg font-extrabold text-[#111827]">Board Editions</h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
           {BOARD_THEMES.map((item) => {
             const owned = isOwned(item.id, item.priceCoins);
@@ -176,13 +176,13 @@ export function AtelierView() {
                 key={item.id}
                 className={`rounded-2xl p-4 border-2 flex flex-col justify-between ${
                   equipped
-                    ? 'bg-[#1A2F75] border-[#EAB957]'
-                    : 'bg-[#14251E]/95 border-[#2A463B]'
+                    ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                    : 'bg-white border-[#CBD5E1]'
                 }`}
               >
                 <div>
                   <div
-                    className="h-14 rounded-xl border border-white/15 mb-3 flex items-center justify-center"
+                    className="h-14 rounded-xl border-2 border-[#111827] mb-3 flex items-center justify-center"
                     style={{ backgroundColor: item.frameBg }}
                   >
                     <div
@@ -190,16 +190,16 @@ export function AtelierView() {
                       style={{ backgroundColor: item.tileBg, borderColor: item.tileBorder }}
                     />
                   </div>
-                  <div className="font-display text-sm font-bold text-white">{item.name}</div>
-                  <p className="mt-0.5 text-[11px] text-[#9BB0A5] leading-snug">{item.description}</p>
+                  <div className="font-display text-sm font-extrabold text-[#111827]">{item.name}</div>
+                  <p className="mt-0.5 text-[11px] text-[#64748B] leading-snug">{item.description}</p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => handleEquipOrBuy('board', item.id, item.priceCoins, item.currency)}
-                  className={`mt-4 w-full py-2 px-3 rounded-xl font-display font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer ${
+                  className={`mt-4 w-full py-2 px-3 rounded-xl font-display font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer ${
                     equipped
-                      ? 'bg-[#0C1814] text-[#34D399] border border-[#1E4D40]'
+                      ? 'bg-[#DCFCE7] text-[#047857] border-2 border-[#10B981]'
                       : owned
                         ? 'game-btn-blue'
                         : 'game-btn-gold'
@@ -208,14 +208,14 @@ export function AtelierView() {
                   {equipped ? (
                     <>
                       <Check className="w-3.5 h-3.5" />
-                      EQUIPPED
+                      Equipped
                     </>
                   ) : owned ? (
-                    'EQUIP'
+                    'Equip'
                   ) : (
                     <>
                       <Lock className="w-3.5 h-3.5" />
-                      {item.priceCoins} {item.currency === 'gems' ? 'GEMS' : 'COINS'}
+                      {item.priceCoins} {item.currency === 'gems' ? 'Gems' : 'Coins'}
                     </>
                   )}
                 </button>
@@ -228,7 +228,7 @@ export function AtelierView() {
       {/* Dice Finishes & Avatar Frames */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <section className="space-y-3">
-          <h2 className="font-display text-lg font-bold text-white">Dice Finishes</h2>
+          <h2 className="font-display text-lg font-extrabold text-[#111827]">Dice Finishes</h2>
           <div className="grid grid-cols-2 gap-3">
             {DICE_THEMES.map((item) => {
               const owned = isOwned(item.id, item.priceCoins);
@@ -237,13 +237,15 @@ export function AtelierView() {
                 <div
                   key={item.id}
                   className={`rounded-2xl p-3.5 border-2 flex flex-col justify-between ${
-                    equipped ? 'bg-[#1A2F75] border-[#EAB957]' : 'bg-[#14251E]/95 border-[#2A463B]'
+                    equipped
+                      ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                      : 'bg-white border-[#CBD5E1]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className="w-10 h-10 rounded-xl border-2 shrink-0 flex items-center justify-center"
-                      style={{ backgroundColor: item.faceBg, borderColor: item.borderColor }}
+                      className="w-10 h-10 rounded-xl border-2 border-[#111827] shrink-0 flex items-center justify-center"
+                      style={{ backgroundColor: item.faceBg }}
                     >
                       <span
                         className="w-2.5 h-2.5 rounded-full"
@@ -251,25 +253,27 @@ export function AtelierView() {
                       />
                     </div>
                     <div className="min-w-0">
-                      <div className="font-display text-xs font-bold text-white truncate">{item.name}</div>
+                      <div className="font-display text-xs font-extrabold text-[#111827] truncate">
+                        {item.name}
+                      </div>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleEquipOrBuy('dice', item.id, item.priceCoins, item.currency)}
-                    className={`mt-3 w-full py-2 rounded-xl font-display font-bold text-xs cursor-pointer ${
+                    className={`mt-3 w-full py-2 rounded-xl font-display font-extrabold text-xs cursor-pointer ${
                       equipped
-                        ? 'bg-[#0C1814] text-[#34D399] border border-[#1E4D40]'
+                        ? 'bg-[#DCFCE7] text-[#047857] border-2 border-[#10B981]'
                         : owned
                           ? 'game-btn-blue'
                           : 'game-btn-gold'
                     }`}
                   >
                     {equipped
-                      ? 'EQUIPPED'
+                      ? 'Equipped'
                       : owned
-                        ? 'EQUIP'
-                        : `${item.priceCoins} ${item.currency === 'gems' ? 'GEMS' : 'COINS'}`}
+                        ? 'Equip'
+                        : `${item.priceCoins} ${item.currency === 'gems' ? 'Gems' : 'Coins'}`}
                   </button>
                 </div>
               );
@@ -278,7 +282,7 @@ export function AtelierView() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="font-display text-lg font-bold text-white">Avatar Frames</h2>
+          <h2 className="font-display text-lg font-extrabold text-[#111827]">Avatar Frames</h2>
           <div className="grid grid-cols-2 gap-3">
             {AVATAR_FRAMES.map((item) => {
               const owned = isOwned(item.id, item.priceCoins);
@@ -287,29 +291,33 @@ export function AtelierView() {
                 <div
                   key={item.id}
                   className={`rounded-2xl p-3.5 border-2 flex flex-col justify-between ${
-                    equipped ? 'bg-[#1A2F75] border-[#EAB957]' : 'bg-[#14251E]/95 border-[#2A463B]'
+                    equipped
+                      ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                      : 'bg-white border-[#CBD5E1]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <PlayerAvatar avatarId={avatarId} frameId={item.id} size="xs" alt={item.name} />
-                    <div className="font-display text-xs font-bold text-white truncate">{item.name}</div>
+                    <div className="font-display text-xs font-extrabold text-[#111827] truncate">
+                      {item.name}
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleEquipOrBuy('frame', item.id, item.priceCoins, item.currency)}
-                    className={`mt-3 w-full py-2 rounded-xl font-display font-bold text-xs cursor-pointer ${
+                    className={`mt-3 w-full py-2 rounded-xl font-display font-extrabold text-xs cursor-pointer ${
                       equipped
-                        ? 'bg-[#0C1814] text-[#34D399] border border-[#1E4D40]'
+                        ? 'bg-[#DCFCE7] text-[#047857] border-2 border-[#10B981]'
                         : owned
                           ? 'game-btn-blue'
                           : 'game-btn-gold'
                     }`}
                   >
                     {equipped
-                      ? 'EQUIPPED'
+                      ? 'Equipped'
                       : owned
-                        ? 'EQUIP'
-                        : `${item.priceCoins} ${item.currency === 'gems' ? 'GEMS' : 'COINS'}`}
+                        ? 'Equip'
+                        : `${item.priceCoins} ${item.currency === 'gems' ? 'Gems' : 'Coins'}`}
                   </button>
                 </div>
               );

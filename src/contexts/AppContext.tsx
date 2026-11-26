@@ -19,6 +19,7 @@ import {
   syncNativeBannerVisibility,
 } from '../services/adMobService';
 import {
+  acceptFriendRequestDoc,
   completeTournamentDoc,
   createDefaultProfile,
   createDefaultWallet,
@@ -32,8 +33,14 @@ import {
   joinTournamentDoc,
   leaveWaitingRoom,
   listOpenPublicRooms,
+  removeFriendshipDoc,
+  respondToRoomInviteDoc,
+  sendFriendRequestDoc,
+  sendRoomInviteDoc,
   sendRoomMessage,
   startMultiplayerRoom,
+  subscribeFriendships,
+  subscribeIncomingRoomInvites,
   subscribeProfile,
   subscribeRoom,
   subscribeRoomMessages,
@@ -56,12 +63,14 @@ import {
   ActiveTab,
   AiDifficulty,
   ChatMessageDoc,
+  FriendshipDoc,
   GameMode,
   LeagueTier,
   MatchSummary,
   PlayerColor,
   PlayerProfile,
   RoomDoc,
+  RoomInviteDoc,
   TokenPositions,
   TournamentDoc,
   UserWallet,
@@ -146,6 +155,15 @@ interface AppContextValue {
   refreshTournaments: () => Promise<void>;
   hostNewTournament: (title: string, tier: LeagueTier, maxEntrants: 4 | 8) => Promise<void>;
   registerForTournament: (tournament: TournamentDoc, useFreeTicket: boolean) => Promise<boolean>;
+  // Friends & Real-Time Room Invites
+  friendships: FriendshipDoc[];
+  incomingInvites: RoomInviteDoc[];
+  sendFriendRequest: (target: PlayerProfile) => Promise<void>;
+  acceptFriend: (friendshipId: string, friendName: string) => Promise<void>;
+  removeFriend: (friendshipId: string) => Promise<void>;
+  inviteFriendToPlay: (friendUid: string, friendName: string) => Promise<void>;
+  acceptRoomInvite: (invite: RoomInviteDoc) => Promise<void>;
+  declineRoomInvite: (inviteId: string) => Promise<void>;
   // AdMob Placements
   adModal: ActiveAdModalState | null;
   triggerRewardedAd: (placementId: RewardedPlacementId, onRewardEarned: () => void) => void;
@@ -208,6 +226,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const [leaderboard, setLeaderboard] = useState<PlayerProfile[]>([]);
   const [tournaments, setTournaments] = useState<TournamentDoc[]>([]);
+  const [friendships, setFriendships] = useState<FriendshipDoc[]>([]);
+  const [incomingInvites, setIncomingInvites] = useState<RoomInviteDoc[]>([]);
+  const seenInviteIdsRef = React.useRef<Set<string>>(new Set());
 
   const [adModal, setAdModal] = useState<ActiveAdModalState | null>(null);
   const [matchesSinceLastInterstitial, setMatchesSinceLastInterstitial] = useState(0);
@@ -283,11 +304,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       setWallet(w);
     });
+    const unsubFriends = subscribeFriendships(user.uid, (items) => {
+      setFriendships(items);
+    });
+    const unsubInvites = subscribeIncomingRoomInvites(user.uid, (invites) => {
+      setIncomingInvites(invites);
+      for (const inv of invites) {
+        if (!seenInviteIdsRef.current.has(inv.id)) {
+          seenInviteIdsRef.current.add(inv.id);
+          if (Date.now() - inv.createdAtMs < 20000) {
+            tabletopAudio.playSafeStar();
+            showToast(`${inv.fromName} invited you to table ${inv.roomCode}!`, 'info');
+          }
+        }
+      }
+    });
+    // Pre-fetch public players for Friends & Ranks
+    fetchPublicLeaderboard()
+      .then((rows) => setLeaderboard(rows))
+      .catch(() => {});
+
     return () => {
       unsubProfile();
       unsubWallet();
+      unsubFriends();
+      unsubInvites();
     };
-  }, [user]);
+  }, [user, showToast]);
 
   // Real-time Active Room subscription
   useEffect(() => {
@@ -829,6 +872,135 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   // =========================================================================
+  // REAL-TIME FRIENDS & ROOM INVITATIONS
+  // =========================================================================
+
+  const sendFriendRequest = useCallback(
+    async (target: PlayerProfile) => {
+      if (!user) {
+        showToast('Sign in with Google to add friends and send invites.', 'info');
+        return;
+      }
+      try {
+        await sendFriendRequestDoc(profile, target);
+        showToast(`Friend request sent to ${target.displayName}!`, 'success');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to send friend request.', 'error');
+      }
+    },
+    [user, profile, showToast]
+  );
+
+  const acceptFriend = useCallback(
+    async (friendshipId: string, friendName: string) => {
+      if (!user) return;
+      await acceptFriendRequestDoc(friendshipId);
+      tabletopAudio.playSafeStar();
+      showToast(`${friendName} joined your squad!`, 'success');
+    },
+    [user, showToast]
+  );
+
+  const removeFriend = useCallback(
+    async (friendshipId: string) => {
+      if (!user) return;
+      await removeFriendshipDoc(friendshipId);
+      showToast('Updated your friends list.', 'info');
+    },
+    [user, showToast]
+  );
+
+  const inviteFriendToPlay = useCallback(
+    async (friendUid: string, friendName: string) => {
+      if (!user) {
+        showToast('Sign in with Google to invite friends to a table.', 'info');
+        return;
+      }
+      try {
+        let targetRoom = activeRoom && activeRoom.status === 'waiting' ? activeRoom : null;
+        if (!targetRoom) {
+          const code = await createMultiplayerRoom(profile, {
+            visibility: 'private',
+            mode: 'quick',
+            maxPlayers: 4,
+            entryStake: 100,
+          });
+          setOfflineMatch(null);
+          setActiveRoomId(code);
+          setActiveTab('play');
+          targetRoom = {
+            id: code,
+            roomCode: code,
+            hostUid: profile.uid,
+            visibility: 'private',
+            mode: 'quick',
+            maxPlayers: 4,
+            entryStake: 100,
+            status: 'waiting',
+            openPublic: false,
+            playerUids: [profile.uid],
+            seats: [
+              {
+                uid: profile.uid,
+                name: profile.displayName,
+                avatarId: profile.avatarId,
+                avatarFrame: profile.avatarFrame,
+                color: 'red',
+                isBot: false,
+                elo: profile.elo,
+              },
+            ],
+            tokens: { red: [-1, -1, -1, -1], green: [-1, -1, -1, -1], yellow: [-1, -1, -1, -1], blue: [-1, -1, -1, -1] },
+            turnIndex: 0,
+            diceValue: 0,
+            turnPhase: 'roll',
+            consecutiveSixes: 0,
+            winnerColor: '',
+            winnerUid: '',
+            lastActionText: '',
+            turnCount: 0,
+          };
+        }
+        await sendRoomInviteDoc(targetRoom, profile, friendUid);
+        tabletopAudio.playTokenMove();
+        showToast(`Table invite (${targetRoom.roomCode}) sent to ${friendName}!`, 'success');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Could not send table invite.', 'error');
+      }
+    },
+    [user, activeRoom, profile, showToast]
+  );
+
+  const acceptRoomInvite = useCallback(
+    async (invite: RoomInviteDoc) => {
+      if (!user) {
+        showToast('Sign in with Google to accept table invites.', 'info');
+        return;
+      }
+      try {
+        await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
+        const room = await joinRoomByCode(invite.roomCode, profile);
+        setOfflineMatch(null);
+        setActiveRoomId(room.id);
+        setActiveTab('play');
+        tabletopAudio.playSafeStar();
+        showToast(`Joined ${invite.fromName}'s table (${room.roomCode})!`, 'success');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'This table is no longer open.', 'error');
+      }
+    },
+    [user, profile, showToast]
+  );
+
+  const declineRoomInvite = useCallback(
+    async (inviteId: string) => {
+      if (!user) return;
+      await respondToRoomInviteDoc(inviteId, 'declined').catch(() => {});
+    },
+    [user]
+  );
+
+  // =========================================================================
   // ANDROID ADMOB & REWARDED VIDEO PLACEMENTS
   // =========================================================================
 
@@ -1005,6 +1177,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshTournaments,
       hostNewTournament,
       registerForTournament,
+      friendships,
+      incomingInvites,
+      sendFriendRequest,
+      acceptFriend,
+      removeFriend,
+      inviteFriendToPlay,
+      acceptRoomInvite,
+      declineRoomInvite,
       adModal,
       triggerRewardedAd,
       maybeShowInterstitialAfterMatch,
@@ -1050,6 +1230,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshTournaments,
       hostNewTournament,
       registerForTournament,
+      friendships,
+      incomingInvites,
+      sendFriendRequest,
+      acceptFriend,
+      removeFriend,
+      inviteFriendToPlay,
+      acceptRoomInvite,
+      declineRoomInvite,
       adModal,
       triggerRewardedAd,
       maybeShowInterstitialAfterMatch,

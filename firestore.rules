@@ -212,6 +212,58 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidFriendship(data) {
+      return data.keys().hasAll([
+          'pairUids', 'requesterUid', 'recipientUid',
+          'requesterName', 'requesterAvatarId', 'recipientName', 'recipientAvatarId',
+          'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'pairUids', 'requesterUid', 'recipientUid',
+          'requesterName', 'requesterAvatarId', 'recipientName', 'recipientAvatarId',
+          'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.pairUids is list && data.pairUids.size() == 2 &&
+        data.pairUids[0] is string && data.pairUids[0].size() <= 128 &&
+        data.pairUids[1] is string && data.pairUids[1].size() <= 128 &&
+        isValidId(data.requesterUid) &&
+        isValidId(data.recipientUid) &&
+        data.requesterUid != data.recipientUid &&
+        data.requesterUid in data.pairUids &&
+        data.recipientUid in data.pairUids &&
+        isBoundedString(data.requesterName, 1, 32) &&
+        isBoundedString(data.requesterAvatarId, 1, 64) && data.requesterAvatarId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isBoundedString(data.recipientName, 1, 32) &&
+        isBoundedString(data.recipientAvatarId, 1, 64) && data.recipientAvatarId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.status in ['pending', 'accepted'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRoomInvite(data) {
+      return data.keys().hasAll([
+          'roomId', 'roomCode', 'fromUid', 'fromName', 'fromAvatarId',
+          'toUid', 'mode', 'maxPlayers', 'seatsCount', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'roomId', 'roomCode', 'fromUid', 'fromName', 'fromAvatarId',
+          'toUid', 'mode', 'maxPlayers', 'seatsCount', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isBoundedString(data.roomId, 6, 6) && data.roomId.matches('^[A-Z0-9]{6}$') &&
+        data.roomCode == data.roomId &&
+        isValidId(data.fromUid) &&
+        isBoundedString(data.fromName, 1, 32) &&
+        isBoundedString(data.fromAvatarId, 1, 64) && data.fromAvatarId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isValidId(data.toUid) &&
+        data.fromUid != data.toUid &&
+        data.mode in ['classic', 'quick'] &&
+        data.maxPlayers in [2, 4] &&
+        data.seatsCount is number && data.seatsCount >= 1 && data.seatsCount <= 4 &&
+        data.status in ['pending', 'accepted', 'declined'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // 1. Public Gaming Profiles & Leaderboard (/profiles/{userId})
     // =========================================================================
@@ -446,6 +498,92 @@ service cloud.firestore {
         );
 
       allow delete: if false;
+    }
+
+    // =========================================================================
+    // 5. Friends & Squad Connections (/friendships/{friendshipId})
+    // =========================================================================
+    match /friendships/{friendshipId} {
+      allow get: if isSignedIn() &&
+        isValidId(friendshipId) &&
+        request.auth.uid in existing().pairUids;
+
+      allow list: if isSignedIn() && request.auth.uid in resource.data.pairUids;
+
+      allow create: if isVerified() &&
+        isValidId(friendshipId) &&
+        isValidFriendship(incoming()) &&
+        incoming().requesterUid == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/profiles/$(incoming().recipientUid));
+
+      allow update: if isVerified() &&
+        isValidId(friendshipId) &&
+        isValidFriendship(incoming()) &&
+        existing().status == 'pending' &&
+        incoming().status == 'accepted' &&
+        request.auth.uid == existing().recipientUid &&
+        incoming().pairUids == existing().pairUids &&
+        incoming().requesterUid == existing().requesterUid &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().requesterName == existing().requesterName &&
+        incoming().requesterAvatarId == existing().requesterAvatarId &&
+        incoming().recipientName == existing().recipientName &&
+        incoming().recipientAvatarId == existing().recipientAvatarId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isVerified() &&
+        isValidId(friendshipId) &&
+        request.auth.uid in existing().pairUids;
+    }
+
+    // =========================================================================
+    // 6. Real-Time Table Room Invitations (/roomInvites/{inviteId})
+    // =========================================================================
+    match /roomInvites/{inviteId} {
+      allow get: if isSignedIn() &&
+        isValidId(inviteId) &&
+        (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid);
+
+      allow list: if isSignedIn() &&
+        (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+
+      allow create: if isVerified() &&
+        isValidId(inviteId) &&
+        isValidRoomInvite(incoming()) &&
+        incoming().fromUid == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isRoomMember(incoming().roomId) &&
+        exists(/databases/$(database)/documents/profiles/$(incoming().toUid));
+
+      allow update: if isVerified() &&
+        isValidId(inviteId) &&
+        isValidRoomInvite(incoming()) &&
+        existing().status == 'pending' &&
+        incoming().status in ['accepted', 'declined'] &&
+        (request.auth.uid == existing().toUid || request.auth.uid == existing().fromUid) &&
+        incoming().roomId == existing().roomId &&
+        incoming().roomCode == existing().roomCode &&
+        incoming().fromUid == existing().fromUid &&
+        incoming().fromName == existing().fromName &&
+        incoming().fromAvatarId == existing().fromAvatarId &&
+        incoming().toUid == existing().toUid &&
+        incoming().mode == existing().mode &&
+        incoming().maxPlayers == existing().maxPlayers &&
+        incoming().seatsCount == existing().seatsCount &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isVerified() &&
+        isValidId(inviteId) &&
+        (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid);
     }
   }
 }

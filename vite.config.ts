@@ -25,8 +25,8 @@ export default defineConfig(() => {
           short_name: 'Ludo Crown',
           description:
             'Real-time multiplayer Ludo with live matchmaking, table chat, offline AI, competitive tournaments, rewards, and AdMob support.',
-          theme_color: '#0C1713',
-          background_color: '#0C1713',
+          theme_color: '#FFFFFF',
+          background_color: '#F8FAFC',
           display: 'standalone',
           orientation: 'portrait-primary',
           start_url: '/',

@@ -136,6 +136,51 @@
         "creatorUid", "entrantUids", "entrants", "winnerUid", "winnerName",
         "isPublic", "createdAt", "updatedAt"
       ]
+    },
+    "Friendship": {
+      "title": "Friendship",
+      "description": "Mutual friend connection or pending friend request between two players.",
+      "type": "object",
+      "properties": {
+        "pairUids": { "type": "array", "description": "Exactly 2 sorted player UIDs." },
+        "requesterUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "requesterName": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "requesterAvatarId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientName": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "recipientAvatarId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "status": { "type": "string", "enum": ["pending", "accepted"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "pairUids", "requesterUid", "recipientUid",
+        "requesterName", "requesterAvatarId", "recipientName", "recipientAvatarId",
+        "status", "createdAt", "updatedAt"
+      ]
+    },
+    "RoomInvite": {
+      "title": "RoomInvite",
+      "description": "Real-time room invitation sent from a seated player to a friend.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "roomCode": { "type": "string", "minLength": 6, "maxLength": 6, "pattern": "^[A-Z0-9]{6}$" },
+        "fromUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fromName": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "fromAvatarId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "toUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mode": { "type": "string", "enum": ["classic", "quick"] },
+        "maxPlayers": { "type": "number" },
+        "seatsCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "roomId", "roomCode", "fromUid", "fromName", "fromAvatarId",
+        "toUid", "mode", "maxPlayers", "seatsCount", "status", "createdAt", "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -158,6 +203,14 @@
     "/tournaments/{tournamentId}": {
       "schema": { "$ref": "#/entities/Tournament" },
       "description": "Competitive league tournaments and entrant brackets."
+    },
+    "/friendships/{friendshipId}": {
+      "schema": { "$ref": "#/entities/Friendship" },
+      "description": "Friend connections and pending friend requests between two players."
+    },
+    "/roomInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/RoomInvite" },
+      "description": "Real-time table invitations delivered to friends."
     }
   }
 }
