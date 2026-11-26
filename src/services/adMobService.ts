@@ -86,12 +86,19 @@ export function setAdConsentMode(mode: AdConsentMode): void {
 /**
  * Google AdMob Android & iOS Unit IDs.
  * - Android Adaptive Banner and Android Rewarded Video are wired to your live AdMob Unit IDs.
- * - Android Interstitial and iOS slots stay on official Google Test IDs until live IDs are created.
+ * - Optional live Android Interstitial ID can be injected at build time via VITE_ADMOB_ANDROID_INTERSTITIAL_ID.
+ *   When left unset, native builds skip interstitials rather than serving a Google "Test Ad" popup to Play Store users.
  */
+const GOOGLE_TEST_PUB_PREFIX = 'ca-app-pub-3940256099942544/';
+const ENV_ANDROID_INTERSTITIAL = (
+  (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+    ?.VITE_ADMOB_ANDROID_INTERSTITIAL_ID || ''
+).trim();
+
 const ANDROID_UNIT_IDS = {
   appId: 'ca-app-pub-3940256099942544~3347511713',
   banner: 'ca-app-pub-7279678697929131/9701826584',
-  interstitial: 'ca-app-pub-3940256099942544/1033173712',
+  interstitial: ENV_ANDROID_INTERSTITIAL || 'ca-app-pub-3940256099942544/1033173712',
   rewarded: 'ca-app-pub-7279678697929131/9754631621',
 };
 
@@ -104,6 +111,10 @@ const IOS_TEST_IDS = {
 
 const resolvedPlatform = detectMobilePlatform();
 const activeIds = resolvedPlatform === 'ios' ? IOS_TEST_IDS : ANDROID_UNIT_IDS;
+
+export function isTestAdUnitId(unitId: string): boolean {
+  return !unitId || unitId.startsWith(GOOGLE_TEST_PUB_PREFIX);
+}
 
 export const ADMOB_CONFIG: AdMobPlacementConfig = {
   appIdAndroid: ANDROID_UNIT_IDS.appId,
@@ -171,6 +182,7 @@ export function hasNativeAndroidAdBridge(): boolean {
 
 let capacitorInitialized = false;
 let lastBannerMargin: number | null = null;
+let bannerCreated = false;
 let bannerCurrentlyShown = false;
 
 async function ensureCapacitorAdMobInitialized() {
@@ -220,7 +232,11 @@ export async function showNativeRewardedAd(
 
 export async function showNativeInterstitialAd(): Promise<boolean> {
   const npa = getAdConsentMode() === 'non_personalized';
+  // Never serve Google's "Test Ad" interstitial popup to real Play Store users unless a live Interstitial Unit ID is configured
   if (hasCapacitorAdMobPlugin()) {
+    if (isTestAdUnitId(ADMOB_CONFIG.interstitialUnitId)) {
+      return false;
+    }
     try {
       await ensureCapacitorAdMobInitialized();
       await AdMob.prepareInterstitial({ adId: ADMOB_CONFIG.interstitialUnitId, npa });
@@ -231,6 +247,7 @@ export async function showNativeInterstitialAd(): Promise<boolean> {
     }
   }
   if (typeof window !== 'undefined' && typeof window.AndroidAdMob?.showInterstitialAd === 'function') {
+    if (isTestAdUnitId(ADMOB_CONFIG.interstitialUnitId)) return false;
     await Promise.resolve(window.AndroidAdMob.showInterstitialAd(ADMOB_CONFIG.interstitialUnitId, npa));
     return true;
   }
@@ -245,13 +262,23 @@ export function syncNativeBannerVisibility(visible: boolean, bottomMarginPx?: nu
         typeof bottomMarginPx === 'number'
           ? bottomMarginPx
           : typeof window !== 'undefined' && window.innerWidth < 768
-            ? 58
+            ? 60
             : 0;
+
+      if (bannerCreated && bannerCurrentlyShown && lastBannerMargin === resolvedMargin) {
+        return;
+      }
 
       ensureCapacitorAdMobInitialized()
         .then(async () => {
-          if (bannerCurrentlyShown && lastBannerMargin !== null && lastBannerMargin !== resolvedMargin) {
+          if (bannerCreated && lastBannerMargin === resolvedMargin) {
+            await AdMob.resumeBanner();
+            bannerCurrentlyShown = true;
+            return;
+          }
+          if (bannerCreated) {
             await AdMob.removeBanner().catch(() => {});
+            bannerCreated = false;
             bannerCurrentlyShown = false;
           }
           await AdMob.showBanner({
@@ -261,11 +288,12 @@ export function syncNativeBannerVisibility(visible: boolean, bottomMarginPx?: nu
             margin: resolvedMargin,
             npa,
           });
+          bannerCreated = true;
           bannerCurrentlyShown = true;
           lastBannerMargin = resolvedMargin;
         })
         .catch(() => {});
-    } else {
+    } else if (bannerCreated && bannerCurrentlyShown) {
       bannerCurrentlyShown = false;
       AdMob.hideBanner().catch(() => {});
     }

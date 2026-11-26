@@ -7,6 +7,11 @@ on:
       - master
   workflow_dispatch:
     inputs:
+      version_name:
+        description: 'App version name shown on Play Store (e.g. 1.0.1 — leave blank for auto)'
+        required: false
+        default: ''
+        type: string
       build_ios:
         description: 'Also build unsigned iOS IPA (uses GitHub macOS runner)'
         required: false
@@ -26,6 +31,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Setup Java 17 (Temurin)
         uses: actions/setup-java@v4
@@ -36,8 +42,12 @@ jobs:
       - name: Install web & Capacitor plugin dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Build production web bundle
-        run: npm run build
+      - name: Verify TypeScript types & build production web bundle
+        env:
+          VITE_ADMOB_ANDROID_INTERSTITIAL_ID: ${{ secrets.ADMOB_ANDROID_INTERSTITIAL_ID }}
+        run: |
+          npm run lint
+          npm run build
 
       - name: Install Capacitor CLI & Android platform
         run: |
@@ -45,12 +55,17 @@ jobs:
             @capacitor/cli@6 \
             @capacitor/android@6
 
-      - name: Generate Android project & inject AdMob + Firebase config
+      - name: Generate Android project & inject Play Store SDK 35 + AdMob + Firebase
         id: android_config
         env:
           ADMOB_ANDROID_APP_ID: ${{ secrets.ADMOB_ANDROID_APP_ID }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          ANDROID_TARGET_SDK: '35'
+          ANDROID_VERSION_CODE: ${{ 100 + github.run_number }}
+          ANDROID_VERSION_NAME: ${{ inputs.version_name || format('1.0.{0}', github.run_number) }}
         run: |
+          echo "version_code=$ANDROID_VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$ANDROID_VERSION_NAME" >> "$GITHUB_OUTPUT"
           npx cap add android
           if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n\r ' | base64 --decode > android/app/google-services.json
@@ -67,8 +82,10 @@ jobs:
           npx cap sync android
           REPORT_SHA1=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log((r.sha1List||[]).join(', '));" 2>/dev/null || true)
           REPORT_WEB=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.hasWebClient ? 'true' : 'false');" 2>/dev/null || echo "false")
+          REPORT_PKG=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.packageMatched ? 'true' : 'false');" 2>/dev/null || echo "false")
           echo "gs_sha1=$REPORT_SHA1" >> "$GITHUB_OUTPUT"
           echo "gs_web_client=$REPORT_WEB" >> "$GITHUB_OUTPUT"
+          echo "gs_pkg_matched=$REPORT_PKG" >> "$GITHUB_OUTPUT"
 
       - name: Build installable Android APK (Debug)
         working-directory: android
@@ -76,7 +93,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload Android APK artifact
+      - name: Upload Android Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: LudoCrown-Android-APK
@@ -108,7 +125,7 @@ jobs:
           rm -f app/release-keystore.jks
           echo "built=true" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Signed Play Store AAB & APK
+      - name: Upload Signed Play Store AAB & Release APK
         if: steps.signed_release.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -118,33 +135,42 @@ jobs:
             android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      - name: Publish Android Build & Firebase Sign-In Summary
+      - name: Publish Android Build & Play Store Readiness Summary
         run: |
+          KEY_SHA1="${{ steps.signed_release.outputs.sha1 }}"
+          GS_SHA1="${{ steps.android_config.outputs.gs_sha1 }}"
           {
-            echo "## Ludo Crown Android Build Summary"
+            echo "## Ludo Crown — Android & Play Store Build Summary"
             echo ""
-            echo "| Feature | Status | Details |"
+            echo "| Check | Status | Details |"
             echo "| --- | --- | --- |"
+            echo "| Play Store Target SDK | Ready (API 35) | \`targetSdkVersion = 35\` (Android 15), \`versionCode = ${{ steps.android_config.outputs.version_code }}\`, \`versionName = ${{ steps.android_config.outputs.version_name }}\` |"
+            echo "| App Launcher Icon | Ready | Ludo Crown icon installed across Android mipmap densities |"
             if [ "${{ steps.android_config.outputs.has_live_admob }}" = "true" ]; then
-              echo "| Google AdMob App ID | Live | Injected from \`ADMOB_ANDROID_APP_ID\` + native AdMob plugin wired |"
+              echo "| Google AdMob Ads | Live | Live App ID + Live Banner + Live Rewarded Video wired (test interstitial auto-disabled) |"
             else
-              echo "| Google AdMob App ID | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret for live ads |"
+              echo "| Google AdMob Ads | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret before Play Store release |"
             fi
             if [ "${{ steps.android_config.outputs.has_google_services }}" = "true" ]; then
-              echo "| Native Google Sign-In | Enabled | \`rgcfaIncludeGoogle=true\`, \`google-services.json\` injected, Web OAuth=${{ steps.android_config.outputs.gs_web_client }} |"
+              echo "| Native Google Sign-In | Enabled | Package matched=${{ steps.android_config.outputs.gs_pkg_matched }}, Web OAuth=${{ steps.android_config.outputs.gs_web_client }} |"
             else
               echo "| Native Google Sign-In | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
             fi
             if [ "${{ steps.signed_release.outputs.built }}" = "true" ]; then
-              echo "| Permanent Signing Keystore | Signed | Install \`app-release.apk\` from \`LudoCrown-PlayStore-Signed-Release\` |"
-              if [ -n "${{ steps.signed_release.outputs.sha1 }}" ]; then
+              echo "| Play Store Bundle & APK | Signed | Download \`LudoCrown-PlayStore-Signed-Release\`: upload \`app-release.aab\` to Play Console & test \`app-release.apk\` on phone |"
+              if [ -n "$KEY_SHA1" ]; then
                 echo ""
-                echo "### Signing SHA-1 Verification"
-                echo "- **APK Keystore SHA-1**: \`${{ steps.signed_release.outputs.sha1 }}\`"
-                echo "- **SHA-1(s) inside \`google-services.json\`**: \`${{ steps.android_config.outputs.gs_sha1 || 'NONE FOUND — re-download google-services.json after adding SHA-1!' }}\`"
+                echo "### Google Sign-In SHA-1 Match Check"
+                echo "- **APK Keystore SHA-1**: \`$KEY_SHA1\`"
+                echo "- **SHA-1(s) in \`google-services.json\`**: \`${GS_SHA1:-NONE FOUND}\`"
+                if echo "$GS_SHA1" | grep -qi "$KEY_SHA1"; then
+                  echo "- **Result**: MATCHED — Native Google Sign-In is ready for direct APK installs! *(Once uploaded to Play Console, also add Google Play App Signing SHA-1 in Firebase Console.)*"
+                else
+                  echo "- **Result**: MISMATCH — Paste \`$KEY_SHA1\` in Firebase Console -> Android app \`com.ludocrown.game\`, re-download \`google-services.json\`, and update \`GOOGLE_SERVICES_JSON_BASE64\` secret."
+                fi
               fi
             else
-              echo "| Permanent Signing Keystore | Temporary Debug Key | Add \`ANDROID_KEYSTORE_BASE64\` secrets so SHA-1 stays fixed for Google Sign-In |"
+              echo "| Play Store Bundle & APK | Debug Only | Add \`ANDROID_KEYSTORE_BASE64\` secrets to build signed \`.aab\` & \`.apk\` |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

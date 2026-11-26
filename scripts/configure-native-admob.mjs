@@ -40,21 +40,98 @@ function formatSha1Hex(rawHex) {
   return clean.match(/.{2}/g).join(':');
 }
 
-function enableGoogleAuthInVariablesGradle() {
+function configurePlayStoreSdkAndVersion() {
+  const targetSdk = Number.parseInt(process.env.ANDROID_TARGET_SDK || '35', 10) || 35;
+  const versionCode = Number.parseInt(process.env.ANDROID_VERSION_CODE || '101', 10) || 101;
+  const versionName = (process.env.ANDROID_VERSION_NAME || `1.0.${versionCode}`).trim();
+
+  // 1. Upgrade compileSdkVersion & targetSdkVersion to API 35 (Google Play Store requirement)
   const varsPath = path.resolve('android/variables.gradle');
-  if (!fs.existsSync(varsPath)) {
-    console.warn('android/variables.gradle not found; cannot set rgcfaIncludeGoogle = true.');
-    return false;
-  }
-  let content = fs.readFileSync(varsPath, 'utf8');
-  if (content.includes('rgcfaIncludeGoogle')) {
-    content = content.replace(/rgcfaIncludeGoogle\s*=\s*(true|false)/, 'rgcfaIncludeGoogle = true');
+  if (fs.existsSync(varsPath)) {
+    let vars = fs.readFileSync(varsPath, 'utf8');
+    vars = vars.replace(/compileSdkVersion\s*=\s*\d+/, `compileSdkVersion = ${targetSdk}`);
+    vars = vars.replace(/targetSdkVersion\s*=\s*\d+/, `targetSdkVersion = ${targetSdk}`);
+    if (vars.includes('rgcfaIncludeGoogle')) {
+      vars = vars.replace(/rgcfaIncludeGoogle\s*=\s*(true|false)/, 'rgcfaIncludeGoogle = true');
+    } else {
+      vars = vars.replace(/ext\s*\{/, 'ext {\n    rgcfaIncludeGoogle = true');
+    }
+    fs.writeFileSync(varsPath, vars, 'utf8');
+    console.log(
+      `Configured android/variables.gradle: compileSdkVersion=${targetSdk}, targetSdkVersion=${targetSdk}, rgcfaIncludeGoogle=true`
+    );
   } else {
-    content = content.replace(/ext\s*\{/, 'ext {\n    rgcfaIncludeGoogle = true');
+    console.warn('android/variables.gradle not found; skipping SDK/GoogleAuth patch.');
   }
-  fs.writeFileSync(varsPath, content, 'utf8');
-  console.log('Enabled rgcfaIncludeGoogle = true in android/variables.gradle (bundles play-services-auth)');
+
+  // 2. Suppress AGP tested-compileSdk warning when building API 35 on Capacitor 6 AGP 8.2.x
+  const gradlePropsPath = path.resolve('android/gradle.properties');
+  if (fs.existsSync(gradlePropsPath)) {
+    let props = fs.readFileSync(gradlePropsPath, 'utf8');
+    if (!props.includes('android.suppressUnsupportedCompileSdk')) {
+      props += `\nandroid.suppressUnsupportedCompileSdk=${targetSdk}\n`;
+      fs.writeFileSync(gradlePropsPath, props, 'utf8');
+    }
+  }
+
+  // 3. Patch versionCode & versionName in android/app/build.gradle so every Play Store upload has a higher versionCode
+  const appGradlePath = path.resolve('android/app/build.gradle');
+  if (fs.existsSync(appGradlePath)) {
+    let appGradle = fs.readFileSync(appGradlePath, 'utf8');
+    appGradle = appGradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
+    appGradle = appGradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+    fs.writeFileSync(appGradlePath, appGradle, 'utf8');
+    console.log(`Configured Android release version: versionCode=${versionCode}, versionName="${versionName}"`);
+  }
+
   return true;
+}
+
+function installLudoCrownLauncherIcons() {
+  const icon512 = path.resolve('public/pwa-512x512.png');
+  const iconMaskable = path.resolve('public/pwa-maskable-512x512.png');
+  const resDir = path.resolve('android/app/src/main/res');
+  if (!fs.existsSync(resDir) || !fs.existsSync(icon512)) {
+    return;
+  }
+
+  const fgSource = fs.existsSync(iconMaskable) ? iconMaskable : icon512;
+  const mipmapDirs = [
+    'mipmap-mdpi',
+    'mipmap-hdpi',
+    'mipmap-xhdpi',
+    'mipmap-xxhdpi',
+    'mipmap-xxxhdpi',
+  ];
+
+  let replaced = 0;
+  for (const dirName of mipmapDirs) {
+    const targetDir = path.join(resDir, dirName);
+    if (!fs.existsSync(targetDir)) continue;
+    fs.copyFileSync(icon512, path.join(targetDir, 'ic_launcher.png'));
+    fs.copyFileSync(icon512, path.join(targetDir, 'ic_launcher_round.png'));
+    fs.copyFileSync(fgSource, path.join(targetDir, 'ic_launcher_foreground.png'));
+    replaced++;
+  }
+
+  // Match adaptive icon background color to Ludo Crown royal blue
+  const bgValuesPath = path.join(resDir, 'values', 'ic_launcher_background.xml');
+  if (fs.existsSync(bgValuesPath)) {
+    let bgXml = fs.readFileSync(bgValuesPath, 'utf8');
+    bgXml = bgXml.replace(
+      /<color name="ic_launcher_background">[^<]*<\/color>/,
+      '<color name="ic_launcher_background">#2563EB</color>'
+    );
+    fs.writeFileSync(bgValuesPath, bgXml, 'utf8');
+  }
+
+  if (replaced > 0) {
+    console.log(`Installed Ludo Crown app launcher icon across ${replaced} Android mipmap densities`);
+  }
+}
+
+function enableGoogleAuthInVariablesGradle() {
+  return configurePlayStoreSdkAndVersion();
 }
 
 function configureAndroidFirebaseGradle() {
@@ -205,6 +282,7 @@ function configureAndroid() {
   fs.writeFileSync(manifestPath, xml, 'utf8');
   console.log(`Configured Android AdMob App ID in AndroidManifest.xml (${ANDROID_APP_ID})`);
 
+  installLudoCrownLauncherIcons();
   configureAndroidFirebaseGradle();
 }
 
