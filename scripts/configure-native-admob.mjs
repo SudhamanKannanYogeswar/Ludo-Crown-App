@@ -114,13 +114,13 @@ function installLudoCrownLauncherIcons() {
     replaced++;
   }
 
-  // Match adaptive icon background color to Ludo Crown royal blue
+  // Match adaptive icon background color to the sunlit sky-blue edge of Ludo Crown's icon
   const bgValuesPath = path.join(resDir, 'values', 'ic_launcher_background.xml');
   if (fs.existsSync(bgValuesPath)) {
     let bgXml = fs.readFileSync(bgValuesPath, 'utf8');
     bgXml = bgXml.replace(
       /<color name="ic_launcher_background">[^<]*<\/color>/,
-      '<color name="ic_launcher_background">#2563EB</color>'
+      '<color name="ic_launcher_background">#5BCAFF</color>'
     );
     fs.writeFileSync(bgValuesPath, bgXml, 'utf8');
   }
@@ -128,6 +128,71 @@ function installLudoCrownLauncherIcons() {
   if (replaced > 0) {
     console.log(`Installed Ludo Crown app launcher icon across ${replaced} Android mipmap densities`);
   }
+}
+
+function configureAndroidSystemBarsAndInsets() {
+  const mainActivityPath = path.resolve(
+    'android/app/src/main/java/com/ludocrown/game/MainActivity.java'
+  );
+  if (!fs.existsSync(mainActivityPath)) {
+    console.warn('MainActivity.java not found; skipping Android 15 system bar insets patch.');
+    return;
+  }
+
+  const mainActivitySource = `package com.ludocrown.game;
+
+import android.graphics.Color;
+import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        Window window = getWindow();
+        window.setStatusBarColor(Color.WHITE);
+        window.setNavigationBarColor(Color.WHITE);
+
+        WindowInsetsControllerCompat controller =
+            WindowCompat.getInsetsController(window, window.getDecorView());
+        if (controller != null) {
+            controller.setAppearanceLightStatusBars(true);
+            controller.setAppearanceLightNavigationBars(true);
+        }
+
+        // Adapt cleanly to Android 15 (API 35+) edge-to-edge enforcement:
+        // Pad the root content container by system bars (top status bar + bottom Back/Home/Recents
+        // nav buttons), display cutouts, and IME keyboard so app UI and AdMob banners never overlap.
+        View contentView = findViewById(android.R.id.content);
+        if (contentView != null) {
+            contentView.setBackgroundColor(Color.WHITE);
+            ViewCompat.setOnApplyWindowInsetsListener(contentView, (v, windowInsets) -> {
+                Insets bars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars()
+                        | WindowInsetsCompat.Type.displayCutout()
+                        | WindowInsetsCompat.Type.ime()
+                );
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                return WindowInsetsCompat.CONSUMED;
+            });
+            ViewCompat.requestApplyInsets(contentView);
+        }
+    }
+}
+`;
+
+  fs.writeFileSync(mainActivityPath, mainActivitySource, 'utf8');
+  console.log(
+    'Patched MainActivity.java with Android 15 WindowInsetsCompat system bar & navigation bar safe-area handling'
+  );
 }
 
 function enableGoogleAuthInVariablesGradle() {
@@ -283,6 +348,7 @@ function configureAndroid() {
   console.log(`Configured Android AdMob App ID in AndroidManifest.xml (${ANDROID_APP_ID})`);
 
   installLudoCrownLauncherIcons();
+  configureAndroidSystemBarsAndInsets();
   configureAndroidFirebaseGradle();
 }
 

@@ -65,7 +65,7 @@ function LudoCrownShell() {
   const friendsBadgeCount = incomingInvites.length + pendingFriendRequests;
 
   return (
-    <div className="relative h-[100dvh] w-full overflow-hidden flex flex-col text-[#111827]">
+    <div className="relative h-[100dvh] w-full overflow-hidden flex flex-col text-[#111827] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
       <AnimatedGameBackdrop />
 
       {!isPlaying && (
