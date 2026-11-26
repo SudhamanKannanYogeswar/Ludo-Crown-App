@@ -1,4 +1,4 @@
-import { Check, Gift, Play, Ticket } from 'lucide-react';
+import { Check, Gem, Gift, Play, Ticket } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
   DAILY_CHALLENGES,
@@ -161,6 +161,25 @@ export function RewardsView() {
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer whitespace-nowrap"
               >
                 <Play className="w-3.5 h-3.5" />
+                WATCH AD
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#0C1814] border border-[#274136] flex items-center justify-between gap-3">
+              <div>
+                <div className="font-display text-sm font-bold text-white">+5 Bonus Gems</div>
+                <div className="text-xs text-[#9BB0A5]">Unlock premium dice &amp; frames</div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  triggerRewardedAd('bonus_gems', () => {
+                    showToast('+5 Bonus Gems credited!', 'success');
+                  })
+                }
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-display font-bold text-xs game-btn-purple cursor-pointer whitespace-nowrap"
+              >
+                <Gem className="w-3.5 h-3.5" />
                 WATCH AD
               </button>
             </div>

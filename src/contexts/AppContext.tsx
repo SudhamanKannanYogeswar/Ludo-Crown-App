@@ -11,6 +11,7 @@ import {
   ActiveAdModalState,
   ADMOB_CONFIG,
   hasNativeAndroidAdBridge,
+  initNativeAdMob,
   REWARDED_PLACEMENTS,
   RewardedPlacementId,
   showNativeInterstitialAd,
@@ -211,6 +212,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [adModal, setAdModal] = useState<ActiveAdModalState | null>(null);
   const [matchesSinceLastInterstitial, setMatchesSinceLastInterstitial] = useState(0);
   const lastInterstitialAtRef = React.useRef<number>(0);
+  const rewardedLoadingRef = React.useRef<boolean>(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const showToast = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
@@ -315,10 +317,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [user, activeRoom?.id, activeRoom?.visibility]);
 
-  // Hide native Android banner during active Ludo board gameplay to avoid accidental mis-taps
+  // Warm up native AdMob SDK once on mount
   useEffect(() => {
-    syncNativeBannerVisibility(activeTab !== 'play');
-  }, [activeTab]);
+    initNativeAdMob();
+  }, []);
+
+  // Policy-compliant Adaptive Banner visibility:
+  // Shown ONLY on non-gameplay screens (Home, Cups, Rank, Rewards, Shop, and Online Waiting Room).
+  // Strictly hidden whenever active Ludo board gameplay is on screen to prevent accidental clicks.
+  useEffect(() => {
+    const inWaitingRoom = activeTab === 'play' && activeRoom?.status === 'waiting';
+    const shouldShowBanner = activeTab !== 'play' || inWaitingRoom;
+    const marginPx = inWaitingRoom ? 0 : undefined;
+    syncNativeBannerVisibility(shouldShowBanner, marginPx);
+  }, [activeTab, activeRoom?.status]);
 
   const toggleSoundMuted = useCallback(() => {
     setSoundMuted((prev) => {
@@ -823,6 +835,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const creditAdQuotaAndGrant = useCallback(
     async (
       coinsDelta: number,
+      gemsDelta: number,
       ticketsDelta: number,
       onComplete: () => void
     ) => {
@@ -831,6 +844,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const nextWallet: UserWallet = {
         ...wallet,
         coins: wallet.coins + coinsDelta,
+        gems: wallet.gems + gemsDelta,
         freeTournamentTickets: Math.min(20, wallet.freeTournamentTickets + ticketsDelta),
         adRewardedCountToday: Math.min(50, countToday),
         adDate: today,
@@ -861,16 +875,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const spec = REWARDED_PLACEMENTS[placementId];
+      const bonusCoins = placementId === 'daily_bonus_coins' ? 250 : 0;
+      const bonusGems = placementId === 'bonus_gems' ? 5 : 0;
+      const bonusTickets = placementId === 'free_tournament_ticket' ? 1 : 0;
 
       // If running inside Capacitor or Android WebView wrapper with native AdMob SDK
       if (hasNativeAndroidAdBridge()) {
-        showNativeRewardedAd(placementId).then((earned) => {
-          if (earned) {
-            const bonusCoins = placementId === 'daily_bonus_coins' ? 250 : 0;
-            const bonusTickets = placementId === 'free_tournament_ticket' ? 1 : 0;
-            creditAdQuotaAndGrant(bonusCoins, bonusTickets, onRewardEarned);
-          }
-        });
+        if (rewardedLoadingRef.current) return;
+        rewardedLoadingRef.current = true;
+        showToast('Loading rewarded video...', 'info');
+        showNativeRewardedAd(placementId)
+          .then((res) => {
+            if (res?.earned) {
+              creditAdQuotaAndGrant(bonusCoins, bonusGems, bonusTickets, onRewardEarned);
+            } else if (res?.error) {
+              showToast('No video ad ready right now. Please try again shortly.', 'info');
+            }
+          })
+          .finally(() => {
+            rewardedLoadingRef.current = false;
+          });
         return;
       }
 
@@ -884,9 +908,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         durationSeconds: spec.durationSeconds,
         onComplete: () => {
           setAdModal(null);
-          const bonusCoins = placementId === 'daily_bonus_coins' ? 250 : 0;
-          const bonusTickets = placementId === 'free_tournament_ticket' ? 1 : 0;
-          creditAdQuotaAndGrant(bonusCoins, bonusTickets, onRewardEarned);
+          creditAdQuotaAndGrant(bonusCoins, bonusGems, bonusTickets, onRewardEarned);
         },
         onDismiss: () => setAdModal(null),
       });

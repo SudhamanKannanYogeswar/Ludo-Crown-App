@@ -4,6 +4,8 @@ import { AdMob, BannerAdPosition, BannerAdSize } from '@capacitor-community/admo
 export type RewardedPlacementId =
   | 'double_match_reward'
   | 'daily_bonus_coins'
+  | 'bonus_gems'
+  | 'bonus_wheel_spin'
   | 'free_tournament_ticket'
   | 'tactical_reroll';
 
@@ -83,14 +85,14 @@ export function setAdConsentMode(mode: AdConsentMode): void {
 
 /**
  * Google AdMob Android & iOS Unit IDs.
- * - Android Banner uses the live AdMob Banner Unit ID configured for Ludo Crown.
- * - Interstitial, Rewarded, and iOS units stay on official Google Test IDs until live IDs are added.
+ * - Android Adaptive Banner and Android Rewarded Video are wired to your live AdMob Unit IDs.
+ * - Android Interstitial and iOS slots stay on official Google Test IDs until live IDs are created.
  */
 const ANDROID_UNIT_IDS = {
   appId: 'ca-app-pub-3940256099942544~3347511713',
   banner: 'ca-app-pub-7279678697929131/9701826584',
   interstitial: 'ca-app-pub-3940256099942544/1033173712',
-  rewarded: 'ca-app-pub-3940256099942544/5224354917',
+  rewarded: 'ca-app-pub-7279678697929131/9754631621',
 };
 
 const IOS_TEST_IDS = {
@@ -134,6 +136,16 @@ export const REWARDED_PLACEMENTS: Record<
     rewardLabel: '+250 Coins',
     durationSeconds: 5,
   },
+  bonus_gems: {
+    title: 'Sponsored Gem Vault',
+    rewardLabel: '+5 Bonus Gems',
+    durationSeconds: 5,
+  },
+  bonus_wheel_spin: {
+    title: 'Lucky Crown Bonus Spin',
+    rewardLabel: '1 Extra Wheel Spin',
+    durationSeconds: 5,
+  },
   free_tournament_ticket: {
     title: 'Sponsored League Entry',
     rewardLabel: '+1 Free Tournament Ticket',
@@ -158,6 +170,8 @@ export function hasNativeAndroidAdBridge(): boolean {
 }
 
 let capacitorInitialized = false;
+let lastBannerMargin: number | null = null;
+let bannerCurrentlyShown = false;
 
 async function ensureCapacitorAdMobInitialized() {
   if (capacitorInitialized) return;
@@ -169,23 +183,37 @@ async function ensureCapacitorAdMobInitialized() {
   }
 }
 
-export async function showNativeRewardedAd(placementId: RewardedPlacementId): Promise<boolean | null> {
+export function initNativeAdMob(): void {
+  if (hasCapacitorAdMobPlugin()) {
+    ensureCapacitorAdMobInitialized().catch(() => {});
+  }
+}
+
+export interface NativeRewardedResult {
+  earned: boolean;
+  error?: string;
+}
+
+export async function showNativeRewardedAd(
+  placementId: RewardedPlacementId
+): Promise<NativeRewardedResult | null> {
   const npa = getAdConsentMode() === 'non_personalized';
   if (hasCapacitorAdMobPlugin()) {
     try {
       await ensureCapacitorAdMobInitialized();
       await AdMob.prepareRewardVideoAd({ adId: ADMOB_CONFIG.rewardedUnitId, npa });
       const reward = await AdMob.showRewardVideoAd();
-      return Boolean(reward);
-    } catch {
-      return false;
+      return { earned: Boolean(reward && (reward.amount === undefined || reward.amount > 0)) };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err ?? 'Ad unavailable');
+      return { earned: false, error: msg };
     }
   }
   if (typeof window !== 'undefined' && typeof window.AndroidAdMob?.showRewardedAd === 'function') {
     const earned = await Promise.resolve(
       window.AndroidAdMob.showRewardedAd(ADMOB_CONFIG.rewardedUnitId, placementId, npa)
     );
-    return Boolean(earned);
+    return { earned: Boolean(earned) };
   }
   return null;
 }
@@ -209,22 +237,36 @@ export async function showNativeInterstitialAd(): Promise<boolean> {
   return false;
 }
 
-export function syncNativeBannerVisibility(visible: boolean) {
+export function syncNativeBannerVisibility(visible: boolean, bottomMarginPx?: number) {
   const npa = getAdConsentMode() === 'non_personalized';
   if (hasCapacitorAdMobPlugin()) {
     if (visible) {
+      const resolvedMargin =
+        typeof bottomMarginPx === 'number'
+          ? bottomMarginPx
+          : typeof window !== 'undefined' && window.innerWidth < 768
+            ? 58
+            : 0;
+
       ensureCapacitorAdMobInitialized()
-        .then(() =>
-          AdMob.showBanner({
+        .then(async () => {
+          if (bannerCurrentlyShown && lastBannerMargin !== null && lastBannerMargin !== resolvedMargin) {
+            await AdMob.removeBanner().catch(() => {});
+            bannerCurrentlyShown = false;
+          }
+          await AdMob.showBanner({
             adId: ADMOB_CONFIG.bannerUnitId,
             adSize: BannerAdSize.ADAPTIVE_BANNER,
             position: BannerAdPosition.BOTTOM_CENTER,
-            margin: 56,
+            margin: resolvedMargin,
             npa,
-          })
-        )
+          });
+          bannerCurrentlyShown = true;
+          lastBannerMargin = resolvedMargin;
+        })
         .catch(() => {});
     } else {
+      bannerCurrentlyShown = false;
       AdMob.hideBanner().catch(() => {});
     }
     return;

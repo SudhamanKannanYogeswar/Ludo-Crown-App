@@ -45,22 +45,24 @@ Add your AdMob Android App ID in **GitHub Settings → Secrets and variables →
 - **`ADMOB_ANDROID_APP_ID`**: your AdMob Android App ID (`ca-app-pub-7279678697929131~XXXXXXXXXX`, found in Google AdMob → App settings).
 - *(Optional for iOS)* **`ADMOB_IOS_APP_ID`**: your AdMob iOS App ID.
 
-> Your live Android Banner Unit ID (`ca-app-pub-7279678697929131/9701826584`) is already wired in `src/services/adMobService.ts`.
+> Your live Android Ad Units are already wired in `src/services/adMobService.ts`:
+> - **Adaptive Banner**: `ca-app-pub-7279678697929131/9701826584` (Home, Cups, Rank, Rewards, Shop, and Online Waiting Rooms — auto-hidden during active gameplay)
+> - **Rewarded Video**: `ca-app-pub-7279678697929131/9754631621` (+250 Coins, +5 Gems, Free Cup Ticket, 2x Post-Match Coins, Bonus Lucky Wheel Spin, Practice Dice Re-Roll)
 
 ---
 
 ## 3. iOS App Store Build (No Mac Needed)
 
 - Optionally add **`GOOGLE_SERVICE_INFO_PLIST_BASE64`** (base64 of your Firebase iOS `GoogleService-Info.plist`) to enable native Google Sign-In on iOS.
-- The GitHub Actions workflow runs on Apple's `macos-latest` runner and outputs **`LudoCrown-iOS-Unsigned-IPA`**.
+- The GitHub Actions workflow runs on Apple's `macos-latest` runner when you check **Also build unsigned iOS IPA** under **Run workflow**, outputting **`LudoCrown-iOS-Unsigned-IPA`**.
 - To sign and publish directly to **Apple App Store Connect** without a Mac, connect this GitHub repo to **Codemagic**.
 
 ---
 
 ## 4. Built-In Google AdMob, Play Store & App Store Policy Safeguards
 
-- **No Gameplay Overlap**: Adaptive Banner (`ca-app-pub-7279678697929131/9701826584`) automatically unmounts whenever the Ludo board (`play`) is active to prevent accidental clicks.
+- **No Gameplay Overlap**: Adaptive Banner (`ca-app-pub-7279678697929131/9701826584`) sits inside a dedicated 64px non-interactive safe zone on menus & waiting rooms, and automatically unmounts whenever the Ludo board (`play`) is active to prevent accidental clicks.
 - **Explicit Attribution**: Every banner, interstitial, and rewarded placement carries a visible `AD` label.
-- **Opt-In Rewarded Video**: Exact coin/ticket/re-roll reward is disclosed before watching; exiting early cancels safely without penalty.
+- **Opt-In Rewarded Video**: Rewarded Video (`ca-app-pub-7279678697929131/9754631621`) discloses exact rewards before watching; exiting early cancels safely without penalty.
 - **Natural-Break Interstitials + Cooldown**: Interstitials never fire on app launch, app exit, or mid-turn. Strictly capped at 1 per 3 completed matches with a minimum 90-second cooldown.
 - **Privacy & Consent (UMP / Apple ATT)**: Non-personalized ads (`npa: true`) are requested by default until the player opts into personalized ads in the Ad Privacy toggle.

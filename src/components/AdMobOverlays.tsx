@@ -150,9 +150,24 @@ export function AdaptiveBannerAd({
   onInspectPolicy,
   onOpenRewards,
 }: {
-  onInspectPolicy: () => void;
-  onOpenRewards: () => void;
+  onInspectPolicy?: () => void;
+  onOpenRewards?: () => void;
 }) {
+  // Inside native Android/iOS APK, reserve a clean 64px non-interactive safe zone
+  // directly behind the native Google AdMob Adaptive Banner so no clickable UI is ever overlapped.
+  if (hasCapacitorAdMobPlugin()) {
+    return (
+      <aside
+        aria-label="Google AdMob Adaptive Banner Safe Zone"
+        className="relative z-10 w-full h-[64px] bg-[#09120F] border-t border-[#223930] flex items-center justify-center pointer-events-none select-none"
+      >
+        <span className="text-[10px] font-mono tracking-wider text-[#4E695E] uppercase">
+          Sponsored · AdMob
+        </span>
+      </aside>
+    );
+  }
+
   return (
     <aside
       aria-label="Google AdMob Adaptive Banner Slot"
@@ -170,22 +185,28 @@ export function AdaptiveBannerAd({
             <span className="font-mono text-[10px] text-[#94A3B8] hidden sm:inline">{ADMOB_CONFIG.bannerUnitId}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onInspectPolicy}
-            className="text-[11px] font-semibold text-[#A6BBB0] hover:text-white whitespace-nowrap cursor-pointer"
-          >
-            Policy
-          </button>
-          <button
-            type="button"
-            onClick={onOpenRewards}
-            className="px-2 py-0.5 rounded-lg bg-[#1C3229] border border-[#3B5E50] text-[10px] font-bold text-[#EAB957] hover:bg-[#233A85] whitespace-nowrap cursor-pointer"
-          >
-            +250 Coins
-          </button>
-        </div>
+        {(onInspectPolicy || onOpenRewards) && (
+          <div className="flex items-center gap-2 shrink-0">
+            {onInspectPolicy && (
+              <button
+                type="button"
+                onClick={onInspectPolicy}
+                className="text-[11px] font-semibold text-[#A6BBB0] hover:text-white whitespace-nowrap cursor-pointer"
+              >
+                Policy
+              </button>
+            )}
+            {onOpenRewards && (
+              <button
+                type="button"
+                onClick={onOpenRewards}
+                className="px-2 py-0.5 rounded-lg bg-[#1C3229] border border-[#3B5E50] text-[10px] font-bold text-[#EAB957] hover:bg-[#233A85] whitespace-nowrap cursor-pointer"
+              >
+                +250 Coins
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -194,7 +215,8 @@ export function AdaptiveBannerAd({
 const COMPLIANCE_ITEMS = [
   {
     title: 'Zero Gameplay Overlap (Anti-Accidental Click)',
-    detail: 'Adaptive Banner automatically unmounts whenever the Ludo board is active.',
+    detail:
+      'Adaptive Banner displays only on menus & waiting rooms with a dedicated 64px non-interactive safe zone, and auto-hides the instant a Ludo board starts.',
   },
   {
     title: 'Explicit "AD" Attribution Label',
@@ -202,7 +224,7 @@ const COMPLIANCE_ITEMS = [
   },
   {
     title: 'Strict Opt-In Rewarded Video Disclosure',
-    detail: 'Players see exact reward value before opting in; closing early cancels safely.',
+    detail: 'Players see exact reward value (Coins, Gems, 2x Payout, Ticket, Spin, Re-Roll) before opting in; closing early cancels safely.',
   },
   {
     title: 'Natural-Break Frequency & 90s Cooldown Cap',
@@ -215,9 +237,9 @@ const COMPLIANCE_ITEMS = [
       'Requests Non-Personalized Ads (npa: true) by default until the player grants consent on Android or iOS.',
   },
   {
-    title: 'Android Banner Live ID Wired (Test IDs for Other Slots)',
+    title: 'Android Live Banner & Rewarded Units Wired',
     detail:
-      'Android Adaptive Banner is wired to your live AdMob Unit ID; Rewarded, Interstitial, and iOS units remain on Google test IDs until added.',
+      'Android Adaptive Banner and Rewarded Video are wired to your live AdMob Unit IDs; Interstitial and iOS units remain on Google test IDs until added.',
   },
 ];
 
@@ -377,7 +399,9 @@ export function AdPolicyModal({ open, onClose }: { open: boolean; onClose: () =>
               </div>
             </div>
             <div className="p-3 rounded-xl bg-[#0D1A15] border border-[#274136]">
-              <div className="text-[#94A3B8]">Rewarded Video Unit</div>
+              <div className="text-[#94A3B8]">
+                Rewarded Video Unit {unitTab === 'android' ? '(Live)' : '(Test)'}
+              </div>
               <div className="mt-1 font-mono text-[11px] text-white break-all">
                 {unitTab === 'android' ? ADMOB_CONFIG.rewardedUnitIdAndroid : ADMOB_CONFIG.rewardedUnitIdIos}
               </div>

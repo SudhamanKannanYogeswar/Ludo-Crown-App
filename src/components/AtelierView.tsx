@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, Lock, Save } from 'lucide-react';
+import { Check, Coins, Gem, Lock, Play, Save } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
   AVATAR_FRAMES,
@@ -10,7 +10,8 @@ import {
 import { PlayerAvatar } from './PlayerAvatar';
 
 export function AtelierView() {
-  const { profile, wallet, saveCustomization, purchaseCosmetic } = useApp();
+  const { profile, wallet, saveCustomization, purchaseCosmetic, triggerRewardedAd, showToast } =
+    useApp();
 
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [avatarId, setAvatarId] = useState(profile.avatarId);
@@ -76,8 +77,32 @@ export function AtelierView() {
             Customize your character portrait, board skins, dice finishes, and royal frames.
           </p>
         </div>
-        <div className="font-mono tabular-nums text-sm font-bold text-[#EAB957]">
-          {wallet.coins.toLocaleString()} Coins · {wallet.gems} Gems
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              triggerRewardedAd('daily_bonus_coins', () => {
+                showToast('+250 Bonus Coins credited!', 'success');
+              })
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-bold text-xs game-btn-gold cursor-pointer whitespace-nowrap"
+          >
+            <Coins className="w-3.5 h-3.5" />
+            <span>+250 Coins (Ad)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              triggerRewardedAd('bonus_gems', () => {
+                showToast('+5 Bonus Gems credited!', 'success');
+              })
+            }
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-display font-bold text-xs game-btn-purple cursor-pointer whitespace-nowrap"
+          >
+            <Gem className="w-3.5 h-3.5" />
+            <Play className="w-3 h-3" />
+            <span>+5 Gems (Ad)</span>
+          </button>
         </div>
       </div>
 

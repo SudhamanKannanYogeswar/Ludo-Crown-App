@@ -24,6 +24,7 @@ import {
 } from '../game/ludoEngine';
 import { tabletopAudio } from '../game/sound';
 import { MatchSummary, PlayerColor, RoomSeat, TokenPositions } from '../types';
+import { AdaptiveBannerAd } from './AdMobOverlays';
 import { DiceControl } from './DiceControl';
 import { LudoBoard } from './LudoBoard';
 import { PlayerAvatar } from './PlayerAvatar';
@@ -867,6 +868,10 @@ export function MatchArena() {
               </form>
             </div>
           </div>
+        </div>
+
+        <div className="shrink-0 z-20">
+          <AdaptiveBannerAd />
         </div>
       </div>
     );

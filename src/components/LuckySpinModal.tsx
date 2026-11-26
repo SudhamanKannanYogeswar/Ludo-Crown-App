@@ -75,7 +75,7 @@ export function LuckySpinModal({ open, onClose }: { open: boolean; onClose: () =
 
   const handleAdSpin = () => {
     if (spinning) return;
-    triggerRewardedAd('daily_bonus_coins', () => {
+    triggerRewardedAd('bonus_wheel_spin', () => {
       performSpin(false);
     });
   };
