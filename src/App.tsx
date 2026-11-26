@@ -199,7 +199,7 @@ function LudoCrownShell() {
         </div>
       )}
 
-      <main className="relative z-10 flex-1 min-h-0 w-full overflow-y-auto no-scrollbar">
+      <main className="relative flex-1 min-h-0 w-full overflow-y-auto no-scrollbar">
         {activeTab === 'lobby' && (
           <LobbyView
             onOpenWheel={() => setWheelOpen(true)}

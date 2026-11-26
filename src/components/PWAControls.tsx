@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, Smartphone, WifiOff, X } from 'lucide-react';
 import { useOnlineStatus, usePWAInstall } from '../hooks/usePWAInstall';
 
@@ -28,15 +29,18 @@ export function PWAInstallButton() {
         <span className="hidden sm:inline">Install</span>
       </button>
 
-      {showGuide && (
-        <div
-          className="fixed inset-0 z-50 bg-[#0F172A]/45 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Install Ludo Crown Mobile App"
-        >
-          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white border-t-2 sm:border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 pb-7 sm:p-6 animate-pop-in">
-            <div className="w-10 h-1 rounded-full bg-[#CBD5E1] mx-auto mb-3 sm:hidden" />
+      {showGuide &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Install Ludo Crown Mobile App"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowGuide(false);
+            }}
+          >
+            <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Smartphone className="w-5 h-5 text-[#1D4ED8]" />
@@ -82,9 +86,10 @@ export function PWAInstallButton() {
             >
               Got It
             </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body
+        )}
     </>
   );
 }

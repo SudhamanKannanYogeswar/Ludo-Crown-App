@@ -61,9 +61,10 @@ jobs:
           ADMOB_ANDROID_APP_ID: ${{ secrets.ADMOB_ANDROID_APP_ID }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
           ANDROID_TARGET_SDK: '35'
-          ANDROID_VERSION_CODE: ${{ 100 + github.run_number }}
-          ANDROID_VERSION_NAME: ${{ inputs.version_name || format('1.0.{0}', github.run_number) }}
+          INPUT_VERSION_NAME: ${{ inputs.version_name }}
         run: |
+          export ANDROID_VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))
+          export ANDROID_VERSION_NAME="${INPUT_VERSION_NAME:-1.0.${GITHUB_RUN_NUMBER}}"
           echo "version_code=$ANDROID_VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "version_name=$ANDROID_VERSION_NAME" >> "$GITHUB_OUTPUT"
           npx cap add android

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Coins,
   Crown,
@@ -692,14 +693,18 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
       </div>
 
       {/* JOIN BY ROOM CODE MODAL */}
-      {joinModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-[#0F172A]/45 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Join room by code"
-        >
-          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white border-t-2 sm:border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 pb-7 sm:p-6 animate-pop-in">
+      {joinModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Join room by code"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setJoinModalOpen(false);
+            }}
+          >
+            <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in">
             <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-[#1D4ED8]" />
@@ -745,18 +750,23 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </button>
             </form>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body
+        )}
 
       {/* MATCH OPTIONS MODAL (Players, Rules, Stake, Bot Skill) */}
-      {optionsModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-[#0F172A]/45 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Match options"
-        >
-          <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white border-t-2 sm:border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 pb-7 sm:p-6 animate-pop-in space-y-4">
+      {optionsModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Match options"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setOptionsModalOpen(false);
+            }}
+          >
+            <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
               <div className="flex items-center gap-2">
                 <SlidersHorizontal className="w-5 h-5 text-[#1D4ED8]" />
@@ -861,9 +871,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             >
               Done
             </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

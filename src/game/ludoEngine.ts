@@ -89,21 +89,13 @@ export const HOME_FINISH_POS: Record<PlayerColor, [number, number]> = {
   blue: [7.75, 7],
 };
 
-export function createInitialTokens(mode: GameMode, activeColors: PlayerColor[]): TokenPositions {
-  const base: TokenPositions = {
+export function createInitialTokens(_mode: GameMode, _activeColors: PlayerColor[]): TokenPositions {
+  return {
     red: [-1, -1, -1, -1],
     green: [-1, -1, -1, -1],
     yellow: [-1, -1, -1, -1],
     blue: [-1, -1, -1, -1],
   };
-
-  if (mode === 'quick') {
-    for (const color of activeColors) {
-      // Quick mode deploys 1 token on the start square and 1 already halfway for crisp 3-minute mobile sessions
-      base[color] = [0, -1, -1, -1];
-    }
-  }
-  return base;
 }
 
 /**

@@ -269,7 +269,7 @@ service cloud.firestore {
     // =========================================================================
     match /profiles/{userId} {
       allow get: if isSignedIn() && isValidId(userId) &&
-        (existing().isPublic == true || request.auth.uid == userId);
+        (request.auth.uid == userId || (resource != null && existing().isPublic == true));
 
       allow list: if isSignedIn() && resource.data.isPublic == true;
 
@@ -348,7 +348,8 @@ service cloud.firestore {
     // =========================================================================
     match /rooms/{roomId} {
       allow get: if isSignedIn() && isValidId(roomId) &&
-        (existing().visibility == 'public' ||
+        (resource == null ||
+         existing().visibility == 'public' ||
          request.auth.uid in existing().playerUids ||
          existing().status == 'waiting');
 
@@ -506,7 +507,10 @@ service cloud.firestore {
     match /friendships/{friendshipId} {
       allow get: if isSignedIn() &&
         isValidId(friendshipId) &&
-        request.auth.uid in existing().pairUids;
+        (
+          (resource == null && request.auth.uid in friendshipId.split('_')) ||
+          (resource != null && request.auth.uid in existing().pairUids)
+        );
 
       allow list: if isSignedIn() && request.auth.uid in resource.data.pairUids;
 
