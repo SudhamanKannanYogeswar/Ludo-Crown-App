@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Trophy } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { LEAGUE_META } from '../data/catalog';
+import { FriendActionButton } from './FriendActionButton';
 
 type SortMetric = 'elo' | 'wins' | 'captures';
 
@@ -191,11 +192,12 @@ export function LeaderboardView() {
                   <div className="font-display text-xs font-extrabold text-[#111827] truncate max-w-full px-1 mb-2">
                     {top2.displayName}
                   </div>
-                  <div className="w-full rounded-t-2xl bg-gradient-to-b from-[#FFFFFF] to-[#E0F2FE] border-2 border-[#111827] shadow-[0_4px_0_#111827] py-4 px-2 text-center min-h-[96px] flex flex-col justify-center">
+                  <div className="w-full rounded-t-2xl bg-gradient-to-b from-[#FFFFFF] to-[#E0F2FE] border-2 border-[#111827] shadow-[0_4px_0_#111827] py-3.5 px-2 text-center min-h-[104px] flex flex-col items-center justify-center">
                     <div className="font-display text-xl font-black text-[#111827]">2</div>
-                    <div className="font-mono text-[11px] font-extrabold text-[#1D4ED8] mt-0.5 truncate">
+                    <div className="font-mono text-[11px] font-extrabold text-[#1D4ED8] mt-0.5 truncate max-w-full">
                       {formatMetric(top2)}
                     </div>
+                    <FriendActionButton target={top2} compact className="mt-2" />
                   </div>
                 </>
               ) : (
@@ -246,11 +248,12 @@ export function LeaderboardView() {
                   <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] truncate max-w-full px-1 mb-2">
                     {top1.displayName}
                   </div>
-                  <div className="btn-gloss-sheen w-full rounded-t-2xl bg-gradient-to-b from-[#FFF066] via-[#FFD41F] to-[#F59E0B] border-2 border-[#111827] shadow-[inset_0_2px_0_rgba(255,255,255,0.7),0_5px_0_#111827] py-5 px-2 text-center min-h-[126px] flex flex-col justify-center">
+                  <div className="btn-gloss-sheen w-full rounded-t-2xl bg-gradient-to-b from-[#FFF066] via-[#FFD41F] to-[#F59E0B] border-2 border-[#111827] shadow-[inset_0_2px_0_rgba(255,255,255,0.7),0_5px_0_#111827] py-4 px-2 text-center min-h-[132px] flex flex-col items-center justify-center">
                     <div className="font-display text-2xl font-black text-[#111827]">1</div>
-                    <div className="font-mono text-xs font-extrabold text-[#111827] mt-0.5 truncate">
+                    <div className="font-mono text-xs font-extrabold text-[#111827] mt-0.5 truncate max-w-full">
                       {formatMetric(top1)}
                     </div>
+                    <FriendActionButton target={top1} compact className="mt-2" />
                   </div>
                 </>
               )}
@@ -266,11 +269,12 @@ export function LeaderboardView() {
                   <div className="font-display text-xs font-extrabold text-[#111827] truncate max-w-full px-1 mb-2">
                     {top3.displayName}
                   </div>
-                  <div className="w-full rounded-t-2xl bg-gradient-to-b from-[#FFFFFF] to-[#DCFCE7] border-2 border-[#111827] shadow-[0_4px_0_#111827] py-3.5 px-2 text-center min-h-[82px] flex flex-col justify-center">
+                  <div className="w-full rounded-t-2xl bg-gradient-to-b from-[#FFFFFF] to-[#DCFCE7] border-2 border-[#111827] shadow-[0_4px_0_#111827] py-3 px-2 text-center min-h-[92px] flex flex-col items-center justify-center">
                     <div className="font-display text-xl font-black text-[#111827]">3</div>
-                    <div className="font-mono text-[11px] font-extrabold text-[#047857] mt-0.5 truncate">
+                    <div className="font-mono text-[11px] font-extrabold text-[#047857] mt-0.5 truncate max-w-full">
                       {formatMetric(top3)}
                     </div>
+                    <FriendActionButton target={top3} compact className="mt-2" />
                   </div>
                 </>
               ) : (
@@ -307,9 +311,12 @@ export function LeaderboardView() {
                       </span>
                     </div>
 
-                    <span className="font-mono text-xs sm:text-sm font-extrabold text-[#1D4ED8] tabular-nums shrink-0">
-                      {formatMetric(row)}
-                    </span>
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <span className="font-mono text-xs sm:text-sm font-extrabold text-[#1D4ED8] tabular-nums">
+                        {formatMetric(row)}
+                      </span>
+                      {!isMe && <FriendActionButton target={row} compact />}
+                    </div>
                   </div>
                 );
               })}

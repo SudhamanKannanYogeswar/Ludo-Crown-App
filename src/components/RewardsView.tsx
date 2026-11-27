@@ -71,9 +71,15 @@ export function RewardsView() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
           {DAILY_STREAK_REWARDS.map((item) => {
-            const isPast =
-              item.day <= (wallet.dailyStreak % 7) ||
-              (wallet.dailyStreak > 0 && wallet.dailyStreak % 7 === 0);
+            const completedInCycle =
+              wallet.dailyStreak === 0
+                ? 0
+                : wallet.dailyStreak % 7 === 0
+                  ? claimedToday
+                    ? 7
+                    : 0
+                  : wallet.dailyStreak % 7;
+            const isPast = item.day <= completedInCycle;
             const isTodayTarget = !claimedToday && item.day === nextDayIndex;
             const isDay7 = item.day === 7;
             return (

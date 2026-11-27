@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  Bot,
   Coins,
   Crown,
   Gift,
   KeyRound,
   LifeBuoy,
+  LogOut,
+  Play,
   PlusSquare,
   RefreshCw,
   Send,
@@ -50,10 +53,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     profile,
     wallet,
     openRooms,
+    myActiveRooms,
     refreshOpenRooms,
     startQuickMatchmaking,
     createPrivateRoom,
     joinRoom,
+    rejoinActiveRoom,
+    forfeitActiveRoom,
     launchOfflinePractice,
     claimDailyStreak,
     triggerRewardedAd,
@@ -74,9 +80,12 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
   const [stake, setStake] = useState<100 | 250 | 500>(100);
   const [aiDifficulty, setAiDifficulty] = useState<AiDifficulty>('tactical');
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [confirmExitRoomId, setConfirmExitRoomId] = useState<string | null>(null);
 
   const [joinModalOpen, setJoinModalOpen] = useState(false);
   const [optionsModalOpen, setOptionsModalOpen] = useState(false);
+  const [randomMatchModalOpen, setRandomMatchModalOpen] = useState(false);
+  const [randomMatchPlayers, setRandomMatchPlayers] = useState<2 | 4>(2);
   const [passPlayModalOpen, setPassPlayModalOpen] = useState(false);
   const [passPlayCount, setPassPlayCount] = useState<2 | 3 | 4>(4);
   const [passPlayMode, setPassPlayMode] = useState<GameMode>('quick');
@@ -86,6 +95,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     'Player 3',
     'Player 4',
   ]);
+  const [passPlaySeatBot, setPassPlaySeatBot] = useState<boolean[]>([false, false, false, false]);
   const [joinCode, setJoinCode] = useState('');
 
   useEffect(() => {
@@ -115,13 +125,17 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     }
   };
 
-  const handleQuickOnlineMode = async (targetPlayers: 2 | 4) => {
+  const handleQuickOnlineMode = async (
+    targetPlayers: 2 | 4,
+    actionKey = 'random_online'
+  ) => {
     if (!isSignedIn) {
       await signInWithGoogle();
       return;
     }
-    setBusyAction(targetPlayers === 4 ? 'quick4' : 'duel2');
+    setBusyAction(actionKey);
     try {
+      setRandomMatchModalOpen(false);
       await startQuickMatchmaking({ mode, maxPlayers: targetPlayers, entryStake: stake });
     } finally {
       setBusyAction(null);
@@ -171,20 +185,151 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
       const raw = (passPlayNames[idx] || '').trim().slice(0, 18);
       return raw || (idx === 0 ? profile.displayName || 'Player 1' : `Player ${idx + 1}`);
     });
+    const seatIsBot = Array.from({ length: passPlayCount }, (_, idx) =>
+      idx === 0 ? false : Boolean(passPlaySeatBot[idx])
+    );
     setPassPlayModalOpen(false);
     launchOfflinePractice({
       mode: passPlayMode,
       playerCount: passPlayCount === 2 ? 2 : 4,
-      difficulty: 'tactical',
+      difficulty: aiDifficulty,
       passAndPlay: {
         playerCount: passPlayCount,
         playerNames: cleanedNames,
+        seatIsBot,
       },
     });
   };
 
   return (
     <div className="max-w-[1040px] mx-auto px-3.5 sm:px-6 py-3 sm:py-4 pb-6">
+      {/* Active Running Rooms Notification Banner — lets players jump straight back into any ongoing match */}
+      {isSignedIn && myActiveRooms.length > 0 && (
+        <div className="mb-4 space-y-2.5 animate-pop-in">
+          {myActiveRooms.slice(0, 3).map((room) => {
+            const isPlayingRoom = room.status === 'playing';
+            const mySeatInRoom = room.seats.find((s) => !s.isBot && s.uid === profile.uid);
+            const myFinishRank = mySeatInRoom?.finishRank;
+            const currentTurnSeat = room.seats[room.turnIndex];
+            const isMyTurnNow =
+              isPlayingRoom &&
+              !myFinishRank &&
+              currentTurnSeat &&
+              !currentTurnSeat.isBot &&
+              currentTurnSeat.uid === profile.uid &&
+              !mySeatInRoom?.autoPlay;
+            const autoPlayOn =
+              isPlayingRoom && !myFinishRank && Boolean(mySeatInRoom?.autoPlay || mySeatInRoom?.away);
+
+            return (
+              <div
+                key={room.id}
+                role="status"
+                className="rounded-3xl bg-gradient-to-r from-[#ECFDF5] via-[#DCFCE7] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-b from-[#34F59F] to-[#059669] text-white border-2 border-[#111827] flex items-center justify-center shrink-0 shadow-xs">
+                    {myFinishRank ? (
+                      <Crown className="w-5 h-5 text-[#FEF08A]" />
+                    ) : autoPlayOn ? (
+                      <Bot className="w-5 h-5" />
+                    ) : (
+                      <Play className="w-4 h-4 fill-current" />
+                    )}
+                    <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-[#10B981] border-2 border-white animate-ping" />
+                    <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-[#10B981] border-2 border-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-display text-sm font-extrabold text-[#111827] truncate">
+                        {isPlayingRoom ? 'Active Match Running' : 'Waiting Table Open'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-white border border-[#111827] font-mono text-[10px] font-black text-[#1D4ED8] leading-none">
+                        {room.roomCode}
+                      </span>
+                      {myFinishRank && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#FEF08A] border border-[#CA8A04] text-[10px] font-display font-extrabold text-[#854D0E] leading-none">
+                          Finished #{myFinishRank}
+                        </span>
+                      )}
+                      {autoPlayOn && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] border border-[#D97706] text-[10px] font-display font-extrabold text-[#B45309] leading-none">
+                          Auto-Play active
+                        </span>
+                      )}
+                      {isMyTurnNow && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#1D4ED8] text-white text-[10px] font-display font-extrabold leading-none animate-pulse">
+                          Your Turn!
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-[#334155] font-semibold truncate mt-0.5">
+                      {isPlayingRoom
+                        ? myFinishRank
+                          ? `${room.maxPlayers}P · Match still in progress · Watch the final finish`
+                          : `${room.maxPlayers}P · ${room.mode === 'quick' ? 'Quick' : 'Classic'} · Turn ${room.turnCount + 1}${autoPlayOn ? ' · Bot covering your turns' : ''}`
+                        : `${room.seats.length}/${room.maxPlayers} seats joined · ${room.mode === 'quick' ? 'Quick' : 'Classic'} rules`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {!myFinishRank && (
+                    <button
+                      type="button"
+                      disabled={busyAction !== null}
+                      onClick={async () => {
+                        if (confirmExitRoomId !== room.id) {
+                          setConfirmExitRoomId(room.id);
+                          return;
+                        }
+                        setConfirmExitRoomId(null);
+                        setBusyAction(`exit_${room.id}`);
+                        try {
+                          await forfeitActiveRoom(room.id);
+                        } finally {
+                          setBusyAction(null);
+                        }
+                      }}
+                      className={`px-2.5 py-2 rounded-xl font-display font-extrabold text-[11px] border-2 border-[#111827] shadow-[0_3px_0_#111827] inline-flex items-center gap-1 cursor-pointer whitespace-nowrap disabled:opacity-60 transition-colors ${
+                        confirmExitRoomId === room.id
+                          ? 'bg-[#E11D48] text-white'
+                          : 'bg-white hover:bg-[#FEE2E2] text-[#B91C1C]'
+                      }`}
+                      title="Exit match permanently (no rewards)"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>
+                        {busyAction === `exit_${room.id}`
+                          ? 'Exiting...'
+                          : confirmExitRoomId === room.id
+                            ? 'Confirm Exit'
+                            : 'Exit'}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={busyAction !== null}
+                    onClick={async () => {
+                      setConfirmExitRoomId(null);
+                      setBusyAction(`rejoin_${room.id}`);
+                      try {
+                        await rejoinActiveRoom(room.id);
+                      } finally {
+                        setBusyAction(null);
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue btn-gloss-sheen cursor-pointer whitespace-nowrap disabled:opacity-60"
+                  >
+                    {busyAction === `rejoin_${room.id}` ? 'Joining...' : myFinishRank ? 'Spectate' : 'Rejoin'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Pending WhatsApp / Deep-Link Invite Banner for Guests */}
       {!isSignedIn && pendingDeepLinkRoomCode && (
         <div className="mb-4 rounded-3xl bg-gradient-to-r from-[#DBEAFE] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3 animate-pop-in">
@@ -300,7 +445,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               <svg
                 aria-hidden="true"
                 viewBox="0 0 36 36"
-                className="pointer-events-none absolute top-11 left-5 w-6 h-6 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
+                className="pointer-events-none absolute top-3 right-4 w-6 h-6 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
               >
                 <path
                   d="M18 2 L22 14 L34 18 L22 22 L18 34 L14 22 L2 18 L14 14 Z"
@@ -313,7 +458,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               <svg
                 aria-hidden="true"
                 viewBox="0 0 36 36"
-                className="pointer-events-none absolute top-4 left-[44%] w-5 h-5 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
+                className="pointer-events-none absolute top-4 left-[48%] w-5 h-5 drop-shadow-[0_2px_3px_rgba(17,24,39,0.35)] animate-sparkle"
                 style={{ animationDelay: '0.9s' }}
               >
                 <path
@@ -339,19 +484,29 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 />
               </svg>
 
-              {/* Animated Brand Crown Badge Top-Left */}
-              <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-b from-[#FFF066] to-[#FACC15] border-2 border-[#111827] shadow-[0_3px_0_#111827]">
-                <Crown className="w-3.5 h-3.5 text-[#E11D48] fill-[#E11D48] animate-badge-bob" />
+              {/* Instant Play Online Matchmaking CTA Top-Left */}
+              <button
+                type="button"
+                disabled={busyAction !== null}
+                onClick={() => handleQuickOnlineMode(playerCount, 'hero_online')}
+                className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full bg-gradient-to-b from-[#FFF066] to-[#FACC15] hover:brightness-105 active:translate-y-0.5 border-2 border-[#111827] shadow-[0_3px_0_#111827] cursor-pointer transition-all disabled:opacity-60"
+                title={`Play ${playerCount}P Online Match Instantly`}
+              >
+                <Crown className="w-3.5 h-3.5 text-[#E11D48] fill-[#E11D48] animate-badge-bob shrink-0" />
                 <span className="font-display text-xs font-black tracking-tight text-[#111827]">
-                  LUDO CROWN
+                  {busyAction === 'hero_online' ? 'MATCHING...' : 'LUDO CROWN'}
                 </span>
-              </div>
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[#1D4ED8] text-white text-[9px] font-display font-extrabold leading-none">
+                  <Play className="w-2.5 h-2.5 fill-current" />
+                  PLAY
+                </span>
+              </button>
 
-              {/* Match Options Trigger Top-Right */}
+              {/* Match Options Trigger Bottom-Left */}
               <button
                 type="button"
                 onClick={() => setOptionsModalOpen(true)}
-                className="absolute top-3 right-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/95 hover:bg-[#FEF08A] border-2 border-[#111827] shadow-[0_3px_0_#111827] text-[11px] font-display font-extrabold text-[#111827] cursor-pointer transition-colors"
+                className="absolute bottom-2.5 left-3 z-10 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/95 hover:bg-[#FEF08A] border-2 border-[#111827] shadow-[0_3px_0_#111827] text-[11px] font-display font-extrabold text-[#111827] cursor-pointer transition-colors"
                 title="Change Rules, Players & Stake"
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 text-[#2563EB]" />
@@ -432,13 +587,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               <button
                 type="button"
                 disabled={busyAction !== null}
-                onClick={() => handleQuickOnlineMode(2)}
+                onClick={() => setRandomMatchModalOpen(true)}
                 className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-center sm:text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col items-center sm:items-start justify-between min-h-[114px] sm:min-h-[126px]"
               >
                 <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob">
                   <img
                     src={MODE_DUEL1V1_IMAGE}
-                    alt="1v1 Duel"
+                    alt="Play Online"
                     draggable={false}
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover scale-[1.12] group-hover:scale-[1.22] transition-transform duration-200"
@@ -450,10 +605,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 </div>
                 <div className="mt-2.5 w-full">
                   <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] leading-tight truncate">
-                    {busyAction === 'duel2' ? 'Matching...' : '1v1 Duel'}
+                    {busyAction === 'random_online' ? 'Matching...' : 'Play Online'}
                   </div>
                   <div className="text-[10px] sm:text-[11px] font-bold text-[#047857] mt-0.5 truncate">
-                    Head to head
+                    Random 2P / 4P
                   </div>
                 </div>
               </button>
@@ -750,8 +905,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </p>
             ) : openRooms.length === 0 ? (
               <p className="text-xs text-[#64748B]">
-                No public waiting tables right now. Tap <strong>1v1 Duel</strong> to match online or{' '}
-                <strong>Create room</strong> to host a table!
+                No public waiting tables right now. Tap <strong>Play Online</strong> to match with
+                random 2P or 4P players, or <strong>Create room</strong> to host a table!
               </p>
             ) : (
               <div className="space-y-2 max-h-[168px] overflow-y-auto no-scrollbar">
@@ -1072,7 +1227,12 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-xs font-bold text-[#475569]">Player names</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[#475569]">Players &amp; seat control</span>
+                    <span className="text-[10px] font-semibold text-[#64748B]">
+                      Tap Human / Bot to mix
+                    </span>
+                  </div>
                   {Array.from({ length: passPlayCount }).map((_, idx) => {
                     const colorSpec =
                       passPlayCount === 2
@@ -1086,9 +1246,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                             { label: 'Yellow', hex: '#FACC15' },
                             { label: 'Blue', hex: '#2563EB' },
                           ][idx];
+                    const isSeatBot = idx > 0 && Boolean(passPlaySeatBot[idx]);
 
                     return (
-                      <div key={`pp-${idx}`} className="flex items-center gap-2.5">
+                      <div key={`pp-${idx}`} className="flex items-center gap-2">
                         <span
                           className="w-7 h-7 rounded-full border-2 border-[#111827] shrink-0"
                           style={{ backgroundColor: colorSpec.hex }}
@@ -1097,7 +1258,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                         <input
                           type="text"
                           maxLength={18}
-                          value={passPlayNames[idx] || ''}
+                          disabled={isSeatBot}
+                          value={isSeatBot ? `Bot ${idx}` : passPlayNames[idx] || ''}
                           onChange={(e) => {
                             const val = e.target.value;
                             setPassPlayNames((prev) => {
@@ -1107,8 +1269,31 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                             });
                           }}
                           placeholder={`Player ${idx + 1} (${colorSpec.label})`}
-                          className="flex-1 px-3 py-2 rounded-xl bg-[#F8FAFC] border-2 border-[#CBD5E1] focus:border-[#111827] text-xs font-bold text-[#111827] focus:outline-none"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-xl bg-[#F8FAFC] border-2 border-[#CBD5E1] focus:border-[#111827] text-xs font-bold text-[#111827] focus:outline-none disabled:opacity-65"
                         />
+                        {idx === 0 ? (
+                          <span className="px-2.5 py-2 rounded-xl bg-[#EFF6FF] border border-[#93C5FD] text-[10px] font-display font-extrabold text-[#1D4ED8] shrink-0">
+                            Human
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPassPlaySeatBot((prev) => {
+                                const next = [...prev];
+                                next[idx] = !next[idx];
+                                return next;
+                              })
+                            }
+                            className={`px-2.5 py-2 rounded-xl border-2 text-[10px] font-display font-extrabold cursor-pointer shrink-0 transition-colors ${
+                              isSeatBot
+                                ? 'bg-[#FEF9C3] border-[#111827] text-[#111827]'
+                                : 'bg-white border-[#CBD5E1] hover:border-[#111827] text-[#334155]'
+                            }`}
+                          >
+                            {isSeatBot ? 'Bot AI' : 'Human'}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1121,6 +1306,155 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   Start {passPlayCount}P Pass &amp; Play
                 </button>
               </form>
+            </div>
+          </div>,
+          document.body
+        )}
+      {/* RANDOM ONLINE MATCH MODAL (2P or 4P Selector) */}
+      {randomMatchModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Play Online Random Match"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setRandomMatchModalOpen(false);
+            }}
+          >
+            <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+                <div className="flex items-center gap-2.5">
+                  <div className="relative w-10 h-10 rounded-xl bg-gradient-to-b from-[#34F59F] to-[#059669] border-2 border-[#111827] overflow-hidden shrink-0 flex items-center justify-center">
+                    <img
+                      src={MODE_DUEL1V1_IMAGE}
+                      alt="Play Online"
+                      draggable={false}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover scale-[1.12]"
+                    />
+                  </div>
+                  <div>
+                    <h2 className="font-display text-lg font-extrabold text-[#111827] leading-tight">
+                      Play Online
+                    </h2>
+                    <p className="text-[11px] font-semibold text-[#64748B]">
+                      Random matchmaking · 30s live lobby
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRandomMatchModalOpen(false)}
+                  className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] hover:border-[#111827] cursor-pointer"
+                  aria-label="Close random match setup"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Choose table size</div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {([
+                      {
+                        count: 2 as const,
+                        title: '2 Players',
+                        sub: 'Fast 1v1 showdown',
+                        dots: ['#EC1C24', '#FACC15'],
+                      },
+                      {
+                        count: 4 as const,
+                        title: '4 Players',
+                        sub: 'Full 4-corner board',
+                        dots: ['#EC1C24', '#10B981', '#FACC15', '#2563EB'],
+                      },
+                    ]).map((opt) => {
+                      const active = randomMatchPlayers === opt.count;
+                      return (
+                        <button
+                          key={opt.count}
+                          type="button"
+                          onClick={() => setRandomMatchPlayers(opt.count)}
+                          className={`rounded-2xl p-3.5 text-left border-2 transition-all cursor-pointer ${
+                            active
+                              ? 'bg-gradient-to-b from-[#ECFFF6] to-[#A7F3D0] border-[#111827] shadow-[0_4px_0_#111827]'
+                              : 'bg-[#F8FAFC] border-[#CBD5E1] hover:border-[#111827]'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 mb-2">
+                            {opt.dots.map((hex, idx) => (
+                              <span
+                                key={idx}
+                                className="w-3.5 h-3.5 rounded-full border-2 border-[#111827]"
+                                style={{ backgroundColor: hex }}
+                              />
+                            ))}
+                          </div>
+                          <div className="font-display text-sm font-extrabold text-[#111827]">
+                            {opt.title}
+                          </div>
+                          <div className="text-[11px] font-semibold text-[#475569] mt-0.5">
+                            {opt.sub}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Rule set</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['quick', 'classic'] as GameMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setMode(m)}
+                        className={`py-2 rounded-xl font-display text-xs font-extrabold capitalize cursor-pointer ${
+                          mode === m
+                            ? 'game-btn-gold'
+                            : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                        }`}
+                      >
+                        {m} rules
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Match stake</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([100, 250, 500] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setStake(s)}
+                        className={`py-2 rounded-xl font-mono text-xs font-extrabold cursor-pointer ${
+                          stake === s
+                            ? 'game-btn-blue'
+                            : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                        }`}
+                      >
+                        {s} Coins
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={busyAction !== null}
+                  onClick={() => handleQuickOnlineMode(randomMatchPlayers)}
+                  className="w-full py-3 rounded-2xl font-display font-extrabold text-sm game-btn-green btn-gloss-sheen cursor-pointer disabled:opacity-60"
+                >
+                  {busyAction === 'random_online'
+                    ? 'Finding players...'
+                    : `Find ${randomMatchPlayers}P Online Match`}
+                </button>
+              </div>
             </div>
           </div>,
           document.body

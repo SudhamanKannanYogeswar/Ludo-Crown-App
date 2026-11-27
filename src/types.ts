@@ -66,6 +66,13 @@ export interface RoomSeat {
   color: PlayerColor;
   isBot: boolean;
   elo: number;
+  autoPlay?: boolean;
+  away?: boolean;
+  lastSeenMs?: number;
+  finishRank?: number;
+  completedWithAutoPlay?: boolean;
+  forfeited?: boolean;
+  dryRolls?: number;
 }
 
 export type TokenPositions = Record<PlayerColor, number[]>;
@@ -213,6 +220,17 @@ export interface DailyChallengeDef {
   rewardGems: number;
 }
 
+export interface FinalStandingEntry {
+  uid: string;
+  name: string;
+  avatarId: string;
+  avatarFrame: string;
+  color: PlayerColor;
+  isBot: boolean;
+  rank: number;
+  finishedTokens: number;
+}
+
 export interface MatchSummary {
   won: boolean;
   winnerName: string;
@@ -228,6 +246,10 @@ export interface MatchSummary {
   eloDelta: number;
   turnsPlayed: number;
   doubledWithAd: boolean;
+  finishRank?: number;
+  isFinalResults?: boolean;
+  standings?: FinalStandingEntry[];
+  autoPlayForfeitedRewards?: boolean;
 }
 
 export interface FriendshipDoc {

@@ -131,11 +131,12 @@ export function LudoBoard({
     }
   }, [canInteract, currentTurnColor, movableTokenIndices]);
 
-  // Cancel any stray RAF only when the board component unmounts
+  // Cancel any stray RAF and clear animating lock when the board component unmounts
   useEffect(() => {
     return () => {
       animRunIdRef.current++;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      onAnimChangeRef.current?.(false);
     };
   }, []);
 
@@ -192,10 +193,23 @@ export function LudoBoard({
       onProgress: (t: number) => void
     ): Promise<void> =>
       new Promise((resolve) => {
+        let finished = false;
+        const done = () => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(fallbackTimer);
+          resolve();
+        };
         const start = performance.now();
+        // Safety fallback in case mobile WebView suspends requestAnimationFrame
+        const fallbackTimer = setTimeout(() => {
+          if (!isCancelled()) onProgress(1);
+          done();
+        }, Math.max(250, durationMs + 400));
+
         const tick = (now: number) => {
-          if (isCancelled()) {
-            resolve();
+          if (finished || isCancelled()) {
+            done();
             return;
           }
           const t = Math.min(1, (now - start) / Math.max(1, durationMs));
@@ -203,7 +217,7 @@ export function LudoBoard({
           if (t < 1) {
             rafRef.current = requestAnimationFrame(tick);
           } else {
-            resolve();
+            done();
           }
         };
         rafRef.current = requestAnimationFrame(tick);
@@ -216,6 +230,7 @@ export function LudoBoard({
 
     const runSequence = async () => {
       onAnimChangeRef.current?.(true);
+      try {
       const mover = movers[0];
       const moverKey = tokenKey(mover.color, mover.idx);
 
@@ -387,11 +402,13 @@ export function LudoBoard({
         }
       }
 
-      if (!isCancelled()) {
-        setAnimOverrides({});
-        setRetreatTrail(null);
-        setCaptureBurst(null);
-        onAnimChangeRef.current?.(false);
+      } finally {
+        if (!isCancelled()) {
+          setAnimOverrides({});
+          setRetreatTrail(null);
+          setCaptureBurst(null);
+          onAnimChangeRef.current?.(false);
+        }
       }
     };
 

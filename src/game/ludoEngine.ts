@@ -1,4 +1,11 @@
-import { AiDifficulty, GameMode, PlayerColor, TokenPositions } from '../types';
+import {
+  AiDifficulty,
+  FinalStandingEntry,
+  GameMode,
+  PlayerColor,
+  RoomSeat,
+  TokenPositions,
+} from '../types';
 
 export const ALL_COLORS: PlayerColor[] = ['red', 'green', 'yellow', 'blue'];
 
@@ -148,6 +155,69 @@ export function getMovableTokenIndices(
     }
   }
   return movable;
+}
+
+/**
+ * Smart Pity Timer dice roller:
+ * - Preserves standard 1-in-6 fair odds normally (dryRolls < 2 or when all faces are legal).
+ * - If a player has 0 legal moves for consecutive turns, gently boosts legal-move odds on dry
+ *   turns 3-4 (preferring a 6 when stranded in the yard) and guarantees a legal move by the 5th dry turn.
+ */
+export function rollDiceWithPity(
+  tokens: TokenPositions,
+  color: PlayerColor,
+  dryRolls = 0
+): number {
+  const safeDryRolls = Math.max(0, Math.floor(dryRolls));
+  const legalFaces: number[] = [];
+  for (let d = 1; d <= 6; d++) {
+    if (getMovableTokenIndices(tokens, color, d).length > 0) {
+      legalFaces.push(d);
+    }
+  }
+
+  if (legalFaces.length === 0 || legalFaces.length === 6 || safeDryRolls < 2) {
+    return Math.floor(Math.random() * 6) + 1;
+  }
+
+  const pickLegalFace = (): number => {
+    const allUnfinishedInYard = tokens[color].every((s) => s === -1 || s === 56);
+    if (allUnfinishedInYard && legalFaces.includes(6)) {
+      return 6;
+    }
+    return legalFaces[Math.floor(Math.random() * legalFaces.length)];
+  };
+
+  if (safeDryRolls >= 4) {
+    return pickLegalFace();
+  }
+
+  const boostChance = safeDryRolls === 3 ? 0.65 : 0.35;
+  if (Math.random() < boostChance) {
+    return pickLegalFace();
+  }
+
+  return Math.floor(Math.random() * 6) + 1;
+}
+
+export function updateSeatDryRolls(
+  seats: RoomSeat[],
+  actorSeat: RoomSeat,
+  nextDryRolls: number
+): { seats: RoomSeat[]; changed: boolean } {
+  let changed = false;
+  const clamped = Math.max(0, Math.min(10, Math.floor(nextDryRolls)));
+  const updated = seats.map((s) => {
+    if (s.uid === actorSeat.uid && s.color === actorSeat.color) {
+      const prev = s.dryRolls || 0;
+      if (prev !== clamped) {
+        changed = true;
+        return { ...s, dryRolls: clamped };
+      }
+    }
+    return s;
+  });
+  return { seats: changed ? updated : seats, changed };
 }
 
 export interface MoveOutcome {
@@ -321,3 +391,232 @@ export function chooseAiTokenMove(
 
   return bestIndex;
 }
+
+export function formatOrdinalRank(rank: number): string {
+  if (rank === 1) return '1st';
+  if (rank === 2) return '2nd';
+  if (rank === 3) return '3rd';
+  return `${rank}th`;
+}
+
+export function isColorFinished(tokens: TokenPositions, color: PlayerColor): boolean {
+  return tokens[color].every((s) => s === 56);
+}
+
+export function isSeatFinished(seat: RoomSeat, tokens: TokenPositions): boolean {
+  return typeof seat.finishRank === 'number' || isColorFinished(tokens, seat.color);
+}
+
+export function computeSeatProgressScore(tokens: TokenPositions, color: PlayerColor): number {
+  let finishedCount = 0;
+  let stepSum = 0;
+  for (const step of tokens[color]) {
+    if (step === 56) {
+      finishedCount += 1;
+      stepSum += 57;
+    } else if (step >= 0) {
+      stepSum += step + 1;
+    }
+  }
+  return finishedCount * 1000 + stepSum;
+}
+
+/**
+ * Finds the next seat index after `fromIndex` that has not yet finished all 4 tokens.
+ */
+export function findNextActiveTurnIndex(
+  seats: RoomSeat[],
+  tokens: TokenPositions,
+  fromIndex: number
+): number {
+  if (seats.length === 0) return 0;
+  for (let offset = 1; offset <= seats.length; offset++) {
+    const idx = (fromIndex + offset) % seats.length;
+    if (!isSeatFinished(seats[idx], tokens)) {
+      return idx;
+    }
+  }
+  return (fromIndex + 1) % seats.length;
+}
+
+export function buildFinalStandings(
+  seats: RoomSeat[],
+  tokens: TokenPositions
+): FinalStandingEntry[] {
+  const sorted = [...seats].sort((a, b) => {
+    const aRank = typeof a.finishRank === 'number' ? a.finishRank : Number.POSITIVE_INFINITY;
+    const bRank = typeof b.finishRank === 'number' ? b.finishRank : Number.POSITIVE_INFINITY;
+    if (aRank !== bRank) return aRank - bRank;
+    return computeSeatProgressScore(tokens, b.color) - computeSeatProgressScore(tokens, a.color);
+  });
+
+  return sorted.map((seat, idx) => ({
+    uid: seat.uid,
+    name: seat.name,
+    avatarId: seat.avatarId,
+    avatarFrame: seat.avatarFrame,
+    color: seat.color,
+    isBot: seat.isBot,
+    rank: typeof seat.finishRank === 'number' ? seat.finishRank : idx + 1,
+    finishedTokens: tokens[seat.color].filter((s) => s === 56).length,
+  }));
+}
+
+export interface MultiFinishResolution {
+  updatedSeats: RoomSeat[];
+  seatsChanged: boolean;
+  actorJustFinished: boolean;
+  actorFinishRank: number | null;
+  matchCompleted: boolean;
+  nextTurnIndex: number;
+  winnerColor: string;
+  winnerUid: string;
+  winnerName: string;
+  actionText: string;
+}
+
+/**
+ * Resolves multi-player podium finishes so the match continues until all real (non-bot)
+ * players complete it (or only 1 active seat remains on the board).
+ */
+export function resolveSeatFinishState(params: {
+  seats: RoomSeat[];
+  nextTokens: TokenPositions;
+  actorSeat: RoomSeat;
+  actorDisplayName: string;
+  turnIndex: number;
+  bonusTurn: boolean;
+  baseActionText: string;
+  existingWinnerColor: string;
+  existingWinnerUid: string;
+  existingWinnerName?: string;
+  actorUsedAutoPlay?: boolean;
+}): MultiFinishResolution {
+  const {
+    seats,
+    nextTokens,
+    actorSeat,
+    actorDisplayName,
+    turnIndex,
+    bonusTurn,
+    baseActionText,
+    existingWinnerColor,
+    existingWinnerUid,
+    existingWinnerName,
+    actorUsedAutoPlay = false,
+  } = params;
+
+  const actorJustFinished =
+    typeof actorSeat.finishRank !== 'number' && isColorFinished(nextTokens, actorSeat.color);
+
+  let nextRank =
+    seats.reduce(
+      (max, s) => (typeof s.finishRank === 'number' && s.finishRank > max ? s.finishRank : max),
+      0
+    ) + 1;
+
+  let actorFinishRank: number | null =
+    typeof actorSeat.finishRank === 'number' ? actorSeat.finishRank : null;
+
+  let updatedSeats = seats.map((s) => {
+    if (actorJustFinished && s.uid === actorSeat.uid && s.color === actorSeat.color) {
+      actorFinishRank = nextRank;
+      nextRank += 1;
+      const finishedViaAutoPlay =
+        !s.isBot &&
+        Boolean(s.completedWithAutoPlay || s.autoPlay || s.forfeited || actorUsedAutoPlay);
+      return {
+        ...s,
+        finishRank: actorFinishRank,
+        completedWithAutoPlay: finishedViaAutoPlay,
+        away: false,
+        autoPlay: false,
+        dryRolls: 0,
+      };
+    }
+    return s;
+  });
+
+  const remainingSeats = updatedSeats.filter((s) => !isSeatFinished(s, nextTokens));
+  const remainingHumans = remainingSeats.filter((s) => !s.isBot && !s.forfeited);
+  const matchCompleted = remainingSeats.length <= 1 || remainingHumans.length === 0;
+
+  if (matchCompleted && remainingSeats.length > 0) {
+    // Assign final ranks to remaining unfinished seats (non-forfeited ordered by progress first, forfeited last)
+    const orderedRemaining = [...remainingSeats].sort((a, b) => {
+      const aForf = a.forfeited ? 1 : 0;
+      const bForf = b.forfeited ? 1 : 0;
+      if (aForf !== bForf) return aForf - bForf;
+      return (
+        computeSeatProgressScore(nextTokens, b.color) -
+        computeSeatProgressScore(nextTokens, a.color)
+      );
+    });
+    const assignedRankMap = new Map<string, number>();
+    for (const s of orderedRemaining) {
+      assignedRankMap.set(`${s.uid}:${s.color}`, nextRank);
+      nextRank += 1;
+    }
+    updatedSeats = updatedSeats.map((s) => {
+      const assigned = assignedRankMap.get(`${s.uid}:${s.color}`);
+      if (assigned !== undefined) {
+        const finishedViaAutoPlay =
+          !s.isBot && Boolean(s.completedWithAutoPlay || s.autoPlay || s.away || s.forfeited);
+        return {
+          ...s,
+          finishRank: assigned,
+          completedWithAutoPlay: finishedViaAutoPlay,
+          away: false,
+          autoPlay: false,
+          dryRolls: 0,
+        };
+      }
+      return s;
+    });
+  }
+
+  const seatsChanged = updatedSeats.some((s, idx) => s !== seats[idx]);
+
+  const firstPlaceSeat =
+    updatedSeats.find((s) => s.finishRank === 1) ||
+    (actorJustFinished && actorFinishRank === 1 ? actorSeat : undefined);
+
+  const winnerColor = existingWinnerColor || firstPlaceSeat?.color || '';
+  const winnerUid = existingWinnerUid || firstPlaceSeat?.uid || '';
+  const winnerName = existingWinnerName || firstPlaceSeat?.name || '';
+
+  const nextTurnIndex = matchCompleted
+    ? turnIndex
+    : bonusTurn && !actorJustFinished
+      ? turnIndex
+      : findNextActiveTurnIndex(updatedSeats, nextTokens, turnIndex);
+
+  let actionText = baseActionText;
+  if (actorJustFinished && actorFinishRank !== null) {
+    const rankLabel = formatOrdinalRank(actorFinishRank);
+    if (matchCompleted) {
+      actionText =
+        actorFinishRank === 1
+          ? `${actorDisplayName} claimed 1st place and won the match!`
+          : `${actorDisplayName} finished ${rankLabel} — match complete!`;
+    } else if (actorFinishRank === 1) {
+      actionText = `${actorDisplayName} finished 1st to claim the Crown! Match continues for remaining players.`;
+    } else {
+      actionText = `${actorDisplayName} finished ${rankLabel}! Match continues for remaining players.`;
+    }
+  }
+
+  return {
+    updatedSeats,
+    seatsChanged,
+    actorJustFinished,
+    actorFinishRank,
+    matchCompleted,
+    nextTurnIndex,
+    winnerColor,
+    winnerUid,
+    winnerName,
+    actionText,
+  };
+}
+

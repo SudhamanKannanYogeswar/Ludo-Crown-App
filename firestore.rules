@@ -372,7 +372,7 @@ service cloud.firestore {
          request.auth.uid in existing().playerUids ||
          existing().status == 'waiting');
 
-      allow list: if isSignedIn() && resource.data.openPublic == true;
+      allow list: if isSignedIn() && (resource.data.openPublic == true || request.auth.uid in resource.data.playerUids);
 
       allow create: if isVerified() &&
         isValidId(roomId) &&
@@ -427,14 +427,31 @@ service cloud.firestore {
               'turnPhase', 'lastActionText', 'updatedAt'
             ])
           ) ||
-          // Action 4: Active room member plays a turn (roll dice / move token / finish game)
+          // Action 4: Active room member plays a turn (roll dice / move token / auto-play takeover / finish game)
           (
             existing().status == 'playing' &&
             request.auth.uid in existing().playerUids &&
             incoming().playerUids == existing().playerUids &&
+            incoming().seats.size() == existing().seats.size() &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'tokens', 'turnIndex', 'diceValue', 'turnPhase', 'consecutiveSixes',
+              'seats', 'tokens', 'turnIndex', 'diceValue', 'turnPhase', 'consecutiveSixes',
               'status', 'winnerColor', 'winnerUid', 'lastActionText', 'turnCount', 'updatedAt'
+            ])
+          ) ||
+          // Action 5: Host refreshes waiting-room heartbeat timestamp while actively waiting
+          (
+            existing().status == 'waiting' &&
+            existing().hostUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt'])
+          ) ||
+          // Action 6: Active room member updates seat presence, away/rejoin, or auto-play status during match
+          (
+            existing().status == 'playing' &&
+            request.auth.uid in existing().playerUids &&
+            incoming().playerUids == existing().playerUids &&
+            incoming().seats.size() == existing().seats.size() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'seats', 'lastActionText', 'updatedAt'
             ])
           )
         );

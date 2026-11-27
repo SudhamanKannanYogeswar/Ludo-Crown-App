@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Award, Clock, Crown, LifeBuoy, Play, Plus, Ticket, Trophy } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { BOT_ROSTER, getWeekendCupSchedule, LEAGUE_META } from '../data/catalog';
 import { LeagueTier, TournamentDoc } from '../types';
+import { FriendActionButton } from './FriendActionButton';
 import { PlayerAvatar } from './PlayerAvatar';
 
 const TIERS: LeagueTier[] = ['bronze', 'silver', 'gold', 'grandmaster'];
@@ -12,6 +13,8 @@ export function TournamentsView() {
     isSignedIn,
     profile,
     wallet,
+    leaderboard,
+    refreshLeaderboard,
     tournaments,
     refreshTournaments,
     hostNewTournament,
@@ -40,10 +43,33 @@ export function TournamentsView() {
   useEffect(() => {
     if (isSignedIn) {
       refreshTournaments().catch(() => {});
+      refreshLeaderboard().catch(() => {});
     }
-  }, [isSignedIn, refreshTournaments]);
+  }, [isSignedIn, refreshTournaments, refreshLeaderboard]);
 
   const existingWeekendCup = tournaments.find((t) => t.title === weekendCup.cupTitle) || null;
+
+  const weeklyEventPlayers = useMemo(() => {
+    const enrolled = (existingWeekendCup?.entrants || [])
+      .filter((e) => e.uid !== profile.uid)
+      .map((e) => ({
+        uid: e.uid,
+        displayName: e.name,
+        avatarId: e.avatarId,
+        elo: e.elo,
+      }));
+    if (enrolled.length > 0) return enrolled.slice(0, 6);
+    return [...leaderboard]
+      .filter((p) => p.uid !== profile.uid)
+      .sort((a, b) => b.elo - a.elo || b.wins - a.wins)
+      .slice(0, 6)
+      .map((p) => ({
+        uid: p.uid,
+        displayName: p.displayName,
+        avatarId: p.avatarId,
+        elo: p.elo,
+      }));
+  }, [existingWeekendCup, leaderboard, profile.uid]);
 
   const handleWeekendCupAction = async () => {
     if (!weekendCup.isLive) {
@@ -111,7 +137,10 @@ export function TournamentsView() {
   };
 
   const handlePlayBracketMatch = (tournament: TournamentDoc, round: 'semifinal' | 'final') => {
-    const oppBot = round === 'semifinal' ? BOT_ROSTER[0] : BOT_ROSTER[1];
+    const oppBot =
+      round === 'semifinal'
+        ? BOT_ROSTER[0]
+        : BOT_ROSTER[2 % BOT_ROSTER.length];
     launchOfflinePractice({
       mode: 'quick',
       playerCount: 2,
@@ -121,8 +150,7 @@ export function TournamentsView() {
         tournamentTitle: tournament.title,
         round,
         prizePool: tournament.prizePool,
-        opponentName:
-          tournament.entrants.find((e) => e.uid !== profile.uid)?.name || oppBot.name,
+        opponentName: oppBot.name,
       },
     });
   };
@@ -165,53 +193,88 @@ export function TournamentsView() {
       </div>
 
       {/* Timed Weekend Crown Mini-Cup Featured Banner */}
-      <section className="rounded-3xl bg-gradient-to-r from-[#FFF599] via-[#FDE047] to-[#DBEAFE] border-2 border-[#111827] shadow-[0_5px_0_#111827] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-3.5 min-w-0">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] border-2 border-[#111827] shadow-[0_3px_0_#111827] flex items-center justify-center text-white shrink-0">
-            <Crown className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#111827] text-[10px] font-display font-black ${
-                  weekendCup.isLive
-                    ? 'bg-[#10B981] text-white'
-                    : 'bg-white text-[#1D4ED8]'
-                }`}
-              >
-                <Clock className="w-3 h-3" />
-                {weekendCup.isLive ? 'LIVE WEEKEND CUP' : 'WEEKEND MINI-CUP'}
-              </span>
-              <span className="font-mono text-xs font-extrabold text-[#111827]">
-                {weekendCup.countdownLabel}
-              </span>
+      <section className="rounded-3xl bg-gradient-to-r from-[#FFF599] via-[#FDE047] to-[#DBEAFE] border-2 border-[#111827] shadow-[0_5px_0_#111827] p-4 sm:p-5 space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5 min-w-0">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] border-2 border-[#111827] shadow-[0_3px_0_#111827] flex items-center justify-center text-white shrink-0">
+              <Crown className="w-6 h-6" />
             </div>
-            <h2 className="font-display text-lg sm:text-xl font-black text-[#111827] mt-1 truncate">
-              {weekendCup.cupTitle}
-            </h2>
-            <p className="text-xs font-semibold text-[#334155] mt-0.5">
-              Prize Pool: {weekendCup.prizeCoins.toLocaleString()} Coins + {weekendCup.prizeGems} Gems · Fri 6PM – Sun Midnight
-            </p>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#111827] text-[10px] font-display font-black ${
+                    weekendCup.isLive
+                      ? 'bg-[#10B981] text-white'
+                      : 'bg-white text-[#1D4ED8]'
+                  }`}
+                >
+                  <Clock className="w-3 h-3" />
+                  {weekendCup.isLive ? 'LIVE WEEKEND CUP' : 'WEEKEND MINI-CUP'}
+                </span>
+                <span className="font-mono text-xs font-extrabold text-[#111827]">
+                  {weekendCup.countdownLabel}
+                </span>
+              </div>
+              <h2 className="font-display text-lg sm:text-xl font-black text-[#111827] mt-1 truncate">
+                {weekendCup.cupTitle}
+              </h2>
+              <p className="text-xs font-semibold text-[#334155] mt-0.5">
+                Prize Pool: {weekendCup.prizeCoins.toLocaleString()} Coins + {weekendCup.prizeGems} Gems · Fri 6PM – Sun Midnight
+              </p>
+            </div>
           </div>
+
+          <button
+            type="button"
+            disabled={joiningWeekendCup}
+            onClick={handleWeekendCupAction}
+            className="px-5 py-3 rounded-2xl font-display font-extrabold text-xs sm:text-sm game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-60"
+          >
+            <Trophy className="w-4 h-4" />
+            <span>
+              {joiningWeekendCup
+                ? 'Opening...'
+                : weekendCup.isLive
+                  ? existingWeekendCup?.entrantUids.includes(profile.uid)
+                    ? 'Play Mini-Cup'
+                    : 'Enter Weekend Cup'
+                  : 'Play Qualifier Warm-Up'}
+            </span>
+          </button>
         </div>
 
-        <button
-          type="button"
-          disabled={joiningWeekendCup}
-          onClick={handleWeekendCupAction}
-          className="px-5 py-3 rounded-2xl font-display font-extrabold text-xs sm:text-sm game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-60"
-        >
-          <Trophy className="w-4 h-4" />
-          <span>
-            {joiningWeekendCup
-              ? 'Opening...'
-              : weekendCup.isLive
-                ? existingWeekendCup?.entrantUids.includes(profile.uid)
-                  ? 'Play Mini-Cup'
-                  : 'Enter Weekend Cup'
-                : 'Play Qualifier Warm-Up'}
-          </span>
-        </button>
+        {/* Weekly Event Contenders — One-Tap Add Friend Strip */}
+        {isSignedIn && weeklyEventPlayers.length > 0 && (
+          <div className="pt-3 border-t border-[#111827]/15 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-display font-extrabold uppercase tracking-wide text-[#334155]">
+                {existingWeekendCup && existingWeekendCup.entrants.length > 1
+                  ? 'Weekly Event Entrants'
+                  : 'Weekly Event Contenders'}
+              </span>
+              <span className="text-[10px] font-bold text-[#475569]">Add rivals to your squad</span>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+              {weeklyEventPlayers.map((player) => (
+                <div
+                  key={player.uid}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-2xl bg-white/95 border border-[#111827]/20 shrink-0 shadow-xs"
+                >
+                  <PlayerAvatar avatarId={player.avatarId} size="xs" alt={player.displayName} />
+                  <div className="min-w-0 max-w-[105px]">
+                    <div className="font-display text-xs font-extrabold text-[#111827] truncate">
+                      {player.displayName}
+                    </div>
+                    <div className="font-mono text-[10px] font-bold text-[#64748B]">
+                      {player.elo} pts
+                    </div>
+                  </div>
+                  <FriendActionButton target={player} compact />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Low-Coin Opt-In Rescue Strip */}
@@ -418,34 +481,54 @@ export function TournamentsView() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2.5">
-                    <div className="text-xs font-extrabold text-[#475569]">BRACKET SEEDS</div>
-                    {Array.from({ length: Math.min(4, selectedTournament.maxEntrants) }).map((_, idx) => {
-                      const entrant = selectedTournament.entrants[idx];
-                      const fallbackBot = BOT_ROSTER[idx % BOT_ROSTER.length];
-                      return (
-                        <div
-                          key={`seed-${idx}`}
-                          className="p-3 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center justify-between gap-2.5"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <span className="font-mono text-xs text-[#1D4ED8] font-extrabold w-5">
-                              #{idx + 1}
-                            </span>
-                            <PlayerAvatar
-                              avatarId={entrant ? entrant.avatarId : fallbackBot.avatarId}
-                              size="xs"
-                              alt={entrant ? entrant.name : 'Seed'}
-                            />
-                            <span className="text-xs font-extrabold text-[#111827] truncate">
-                              {entrant ? entrant.name : `${fallbackBot.name} (Seed)`}
-                            </span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-[#475569]">
+                        BRACKET SEEDS ({selectedTournament.entrants.length}/{selectedTournament.maxEntrants})
+                      </span>
+                    </div>
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-0.5">
+                      {Array.from({ length: selectedTournament.maxEntrants }).map((_, idx) => {
+                        const entrant = selectedTournament.entrants[idx];
+                        const fallbackBot = BOT_ROSTER[idx % BOT_ROSTER.length];
+                        const isMe = entrant?.uid === profile.uid;
+                        return (
+                          <div
+                            key={`seed-${idx}`}
+                            className="p-2.5 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] flex items-center justify-between gap-2"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono text-xs text-[#1D4ED8] font-extrabold w-5 shrink-0">
+                                #{idx + 1}
+                              </span>
+                              <PlayerAvatar
+                                avatarId={entrant ? entrant.avatarId : fallbackBot.avatarId}
+                                size="xs"
+                                alt={entrant ? entrant.name : 'Seed'}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-xs font-extrabold text-[#111827] truncate">
+                                  {entrant ? entrant.name : `${fallbackBot.name} (Seed)`}
+                                  {isMe && <span className="ml-1 text-[#1D4ED8]">(You)</span>}
+                                </div>
+                                <div className="font-mono tabular-nums text-[10px] font-bold text-[#64748B]">
+                                  {entrant ? entrant.elo : fallbackBot.elo} pts
+                                </div>
+                              </div>
+                            </div>
+                            {entrant && !isMe && (
+                              <FriendActionButton
+                                target={{
+                                  uid: entrant.uid,
+                                  displayName: entrant.name,
+                                  avatarId: entrant.avatarId,
+                                }}
+                                compact
+                              />
+                            )}
                           </div>
-                          <span className="font-mono tabular-nums text-[11px] font-bold text-[#64748B]">
-                            {entrant ? entrant.elo : fallbackBot.elo}
-                          </span>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div className="flex flex-col justify-between p-4 rounded-2xl bg-[#EFF6FF] border-2 border-[#111827]">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Coins, Gem, Lock, Play, Save } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
@@ -28,6 +28,21 @@ export function AtelierView() {
   const [boardTheme, setBoardTheme] = useState(profile.boardTheme);
   const [diceTheme, setDiceTheme] = useState(profile.diceTheme);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDisplayName(profile.displayName);
+    setAvatarId(profile.avatarId);
+    setAvatarFrame(profile.avatarFrame);
+    setBoardTheme(profile.boardTheme);
+    setDiceTheme(profile.diceTheme);
+  }, [
+    profile.uid,
+    profile.displayName,
+    profile.avatarId,
+    profile.avatarFrame,
+    profile.boardTheme,
+    profile.diceTheme,
+  ]);
 
   const isOwned = (id: string, price: number) =>
     price === 0 || wallet.unlockedCosmetics.includes(id);

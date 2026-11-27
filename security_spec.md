@@ -3,7 +3,7 @@
 ## 1. Data Invariants
 1. **Zero-PII Public Profiles**: `/profiles/{userId}` holds only public game telemetry (`displayName`, `avatarId`, `elo`, `wins`, `league`). No email, phone, or private wallet data is stored in `/profiles`.
 2. **Strict Wallet Isolation**: `/userWallets/{userId}` is readable and writable strictly by `request.auth.uid == userId` with verified email. `list` is permanently denied.
-3. **Room Membership & Bounded Seats**: `/rooms/{roomId}` restricts `playerUids` and `seats` to at most 4 entries. Only members in `playerUids` can execute moves or send chat messages.
+3. **Room Membership & Bounded Seats**: `/rooms/{roomId}` restricts `playerUids` and `seats` to at most 4 entries. Only members in `playerUids` can list their own active/private rooms, update seat presence/auto-play state (with unchanged `playerUids` and `seats.size()`), execute moves, or send chat messages.
 4. **Terminal State Locking**: Once a `/rooms/{roomId}` reaches `status == 'finished'` or a `/tournaments/{tournamentId}` reaches `status == 'completed'`, all subsequent updates are rejected.
 5. **Master Gate Chat Isolation**: `/rooms/{roomId}/messages/{messageId}` verifies room membership against the parent `/rooms/{roomId}` document via `get()` on `get` and `create`, and validates `roomId == resource.data.roomId` and `senderUid == request.auth.uid`.
 6. **Temporal & Immutable Integrity**: `createdAt` and owner fields (`uid`, `hostUid`, `creatorUid`, `roomCode`) are immutable after creation; `createdAt` / `updatedAt` must equal `request.time`.

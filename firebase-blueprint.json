@@ -74,7 +74,7 @@
         "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
         "openPublic": { "type": "boolean" },
         "playerUids": { "type": "array", "description": "Up to 4 human player UIDs." },
-        "seats": { "type": "array", "description": "Up to 4 player seat descriptors." },
+        "seats": { "type": "array", "description": "Up to 4 player seat descriptors including optional presence flags (autoPlay, away, lastSeenMs)." },
         "tokens": { "type": "object", "description": "Token positions by color (red, green, yellow, blue)." },
         "turnIndex": { "type": "number" },
         "diceValue": { "type": "number" },

@@ -21,7 +21,7 @@ import {
   getTodayDateString,
   LEAGUE_META,
 } from '../data/catalog';
-import { createInitialTokens } from '../game/ludoEngine';
+import { computeSeatProgressScore, createInitialTokens, isSeatFinished } from '../game/ludoEngine';
 import {
   ChallengeProgressMap,
   ChatMessageDoc,
@@ -325,6 +325,12 @@ export async function createMultiplayerRoom(
     color: activeColors[0],
     isBot: false,
     elo: profile.elo,
+    autoPlay: false,
+    away: false,
+    lastSeenMs: Date.now(),
+    completedWithAutoPlay: false,
+    forfeited: false,
+    dryRolls: 0,
   };
 
   try {
@@ -357,21 +363,71 @@ export async function createMultiplayerRoom(
   }
 }
 
+export const PUBLIC_ROOM_STALE_MS = 45_000;
+
 export async function listOpenPublicRooms(): Promise<RoomDoc[]> {
   const path = 'rooms';
   try {
-    const q = query(collection(db, 'rooms'), where('openPublic', '==', true), limit(20));
+    const q = query(collection(db, 'rooms'), where('openPublic', '==', true), limit(25));
     const snap = await getDocs(q);
-    return snap.docs.map((d) => {
-      const data = d.data();
-      return {
-        ...(data as Omit<RoomDoc, 'id'>),
-        id: d.id,
-        updatedAtMs: data.updatedAt instanceof Timestamp ? data.updatedAt.toMillis() : Date.now(),
-      };
-    });
+    const now = Date.now();
+    return snap.docs
+      .map((d) => {
+        const data = d.data();
+        const updatedAtMs =
+          data.updatedAt instanceof Timestamp
+            ? data.updatedAt.toMillis()
+            : data.createdAt instanceof Timestamp
+              ? data.createdAt.toMillis()
+              : 0;
+        return {
+          ...(data as Omit<RoomDoc, 'id'>),
+          id: d.id,
+          updatedAtMs,
+        };
+      })
+      .filter(
+        (r) =>
+          r.status === 'waiting' &&
+          r.openPublic === true &&
+          r.updatedAtMs > 0 &&
+          now - r.updatedAtMs <= PUBLIC_ROOM_STALE_MS
+      )
+      .sort((a, b) => (b.updatedAtMs || 0) - (a.updatedAtMs || 0));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function cleanupOwnStaleWaitingRooms(
+  uid: string,
+  keepRoomId?: string | null
+): Promise<void> {
+  if (!uid) return;
+  try {
+    const q = query(collection(db, 'rooms'), where('openPublic', '==', true), limit(25));
+    const snap = await getDocs(q);
+    const staleOwnDocs = snap.docs.filter((d) => {
+      if (keepRoomId && d.id === keepRoomId) return false;
+      const data = d.data();
+      return data.hostUid === uid && data.status === 'waiting';
+    });
+    if (staleOwnDocs.length > 0) {
+      await Promise.allSettled(staleOwnDocs.map((d) => deleteDoc(doc(db, 'rooms', d.id))));
+    }
+  } catch {
+    // Best-effort cleanup of abandoned rooms owned by the current user
+  }
+}
+
+export async function touchWaitingRoomHeartbeat(roomId: string): Promise<void> {
+  if (!roomId) return;
+  try {
+    await updateDoc(doc(db, 'rooms', roomId), {
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Benign if room already started or closed
   }
 }
 
@@ -410,6 +466,12 @@ export async function joinRoomByCode(roomCodeRaw: string, profile: PlayerProfile
       color: nextColor,
       isBot: false,
       elo: profile.elo,
+      autoPlay: false,
+      away: false,
+      lastSeenMs: Date.now(),
+      completedWithAutoPlay: false,
+      forfeited: false,
+      dryRolls: 0,
     };
 
     const nextPlayerUids = [...room.playerUids, profile.uid];
@@ -435,19 +497,28 @@ export async function findOrCreateQuickMatch(
   profile: PlayerProfile,
   options: { mode: GameMode; maxPlayers: 2 | 4; entryStake: number }
 ): Promise<string> {
+  // Clean up any abandoned waiting rooms left behind by this user first
+  await cleanupOwnStaleWaitingRooms(profile.uid);
+
+  // Only match into actively heartbeating public waiting rooms (updated within the last 45s)
   const openRooms = await listOpenPublicRooms();
-  const candidate = openRooms.find(
+  const candidates = openRooms.filter(
     (r) =>
       r.status === 'waiting' &&
       r.mode === options.mode &&
       r.maxPlayers === options.maxPlayers &&
       r.seats.length < r.maxPlayers &&
-      !r.playerUids.includes(profile.uid)
+      !r.playerUids.includes(profile.uid) &&
+      r.hostUid !== profile.uid
   );
 
-  if (candidate) {
-    await joinRoomByCode(candidate.roomCode, profile);
-    return candidate.roomCode;
+  for (const candidate of candidates) {
+    try {
+      await joinRoomByCode(candidate.roomCode, profile);
+      return candidate.roomCode;
+    } catch {
+      // Room may have just started, filled, or closed — try next candidate or open a fresh room
+    }
   }
 
   return createMultiplayerRoom(profile, {
@@ -460,25 +531,50 @@ export async function findOrCreateQuickMatch(
 
 export async function startMultiplayerRoom(room: RoomDoc, fillEmptyWithBots: boolean) {
   const path = `rooms/${room.id}`;
-  const palette = seatColorsForMax(room.maxPlayers);
-  const takenColors = new Set(room.seats.map((s) => s.color));
-  const seats: RoomSeat[] = [...room.seats];
+  const ref = doc(db, 'rooms', room.id);
+
+  let latestRoom = room;
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const fresh = snap.data() as Omit<RoomDoc, 'id'>;
+      if (fresh.status !== 'waiting') return;
+      latestRoom = { ...fresh, id: snap.id };
+    }
+  } catch {
+    // Fall back to provided snapshot
+  }
+
+  const palette = seatColorsForMax(latestRoom.maxPlayers);
+  const takenColors = new Set(latestRoom.seats.map((s) => s.color));
+  const nowMs = Date.now();
+  const seats: RoomSeat[] = latestRoom.seats.map((s) => ({
+    ...s,
+    isBot: Boolean(s.isBot),
+    autoPlay: false,
+    away: false,
+    lastSeenMs: nowMs,
+    completedWithAutoPlay: false,
+    forfeited: false,
+    dryRolls: 0,
+  }));
 
   if (fillEmptyWithBots || seats.length < 2) {
     let botIdx = 0;
     for (const color of palette) {
-      if (seats.length >= room.maxPlayers) break;
+      if (seats.length >= latestRoom.maxPlayers) break;
       if (!takenColors.has(color)) {
         const bot = BOT_ROSTER[botIdx % BOT_ROSTER.length];
         botIdx++;
         seats.push({
-          uid: `${bot.uid}_${color}`,
+          uid: `bot_${bot.uid}_${color}`,
           name: bot.name,
           avatarId: bot.avatarId,
           avatarFrame: bot.avatarFrame,
           color,
           isBot: true,
           elo: bot.elo,
+          dryRolls: 0,
         });
         takenColors.add(color);
       }
@@ -487,11 +583,11 @@ export async function startMultiplayerRoom(room: RoomDoc, fillEmptyWithBots: boo
 
   const activeColors = seats.map((s) => s.color);
   try {
-    await updateDoc(doc(db, 'rooms', room.id), {
+    await updateDoc(ref, {
       status: 'playing',
       openPublic: false,
       seats,
-      tokens: createInitialTokens(room.mode, activeColors),
+      tokens: createInitialTokens(latestRoom.mode, activeColors),
       turnIndex: 0,
       diceValue: 0,
       turnPhase: 'roll',
@@ -506,6 +602,7 @@ export async function startMultiplayerRoom(room: RoomDoc, fillEmptyWithBots: boo
 export async function updateMultiplayerTurn(
   roomId: string,
   payload: {
+    seats?: RoomSeat[];
     tokens: TokenPositions;
     turnIndex: number;
     diceValue: number;
@@ -520,7 +617,7 @@ export async function updateMultiplayerTurn(
 ) {
   const path = `rooms/${roomId}`;
   try {
-    await updateDoc(doc(db, 'rooms', roomId), {
+    const updateBody: Record<string, unknown> = {
       tokens: payload.tokens,
       turnIndex: payload.turnIndex,
       diceValue: payload.diceValue,
@@ -532,10 +629,119 @@ export async function updateMultiplayerTurn(
       lastActionText: clampString(payload.lastActionText, 120),
       turnCount: payload.turnCount,
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (Array.isArray(payload.seats) && payload.seats.length > 0) {
+      updateBody.seats = payload.seats;
+    }
+    await updateDoc(doc(db, 'rooms', roomId), updateBody);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
+}
+
+export async function updateRoomSeatPresence(
+  roomId: string,
+  targetUid: string,
+  updates: { autoPlay?: boolean; away?: boolean; lastSeenMs?: number },
+  actionText?: string
+): Promise<boolean> {
+  if (!roomId || !targetUid) return false;
+  try {
+    const ref = doc(db, 'rooms', roomId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return false;
+    const data = snap.data() as Omit<RoomDoc, 'id'>;
+    if (data.status !== 'playing' || !Array.isArray(data.seats)) return false;
+
+    let changed = false;
+    const nextSeats: RoomSeat[] = data.seats.map((seat) => {
+      if (seat.uid !== targetUid || seat.isBot) return seat;
+      const nextSeat: RoomSeat = {
+        ...seat,
+        ...(updates.autoPlay !== undefined ? { autoPlay: updates.autoPlay } : {}),
+        ...(updates.away !== undefined ? { away: updates.away } : {}),
+        ...(updates.lastSeenMs !== undefined ? { lastSeenMs: updates.lastSeenMs } : {}),
+      };
+      if (
+        nextSeat.autoPlay !== seat.autoPlay ||
+        nextSeat.away !== seat.away ||
+        nextSeat.lastSeenMs !== seat.lastSeenMs
+      ) {
+        changed = true;
+      }
+      return nextSeat;
+    });
+
+    if (!changed) return false;
+
+    const updateBody: Record<string, unknown> = {
+      seats: nextSeats,
+      updatedAt: serverTimestamp(),
+    };
+    if (actionText) {
+      updateBody.lastActionText = clampString(actionText, 120);
+    }
+    await updateDoc(ref, updateBody);
+    return true;
+  } catch {
+    // Benign if offline, room already finished, or concurrent write occurred
+    return false;
+  }
+}
+
+export const ACTIVE_PLAYING_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
+export const PRIVATE_WAITING_ROOM_TTL_MS = 10 * 60 * 1000;
+
+export function subscribeUserActiveRooms(
+  uid: string,
+  onData: (rooms: RoomDoc[]) => void
+): Unsubscribe {
+  const path = 'rooms';
+  const q = query(collection(db, 'rooms'), where('playerUids', 'array-contains', uid), limit(15));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const now = Date.now();
+      const active = snap.docs
+        .map((d) => {
+          const data = d.data();
+          const updatedAtMs =
+            data.updatedAt instanceof Timestamp
+              ? data.updatedAt.toMillis()
+              : data.createdAt instanceof Timestamp
+                ? data.createdAt.toMillis()
+                : now;
+          return {
+            ...(data as Omit<RoomDoc, 'id'>),
+            id: d.id,
+            updatedAtMs,
+          };
+        })
+        .filter((room) => {
+          if (room.status === 'finished') return false;
+          const mySeat = room.seats?.find((s) => !s.isBot && s.uid === uid);
+          if (mySeat?.forfeited) return false;
+          const age = now - (room.updatedAtMs || 0);
+          if (room.status === 'playing') {
+            return age <= ACTIVE_PLAYING_ROOM_TTL_MS;
+          }
+          if (room.status === 'waiting') {
+            return room.visibility === 'public'
+              ? age <= PUBLIC_ROOM_STALE_MS * 2
+              : age <= PRIVATE_WAITING_ROOM_TTL_MS;
+          }
+          return false;
+        })
+        .sort((a, b) => {
+          if (a.status !== b.status) return a.status === 'playing' ? -1 : 1;
+          return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+        });
+      onData(active);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
 }
 
 export async function leaveWaitingRoom(room: RoomDoc, uid: string, playerName: string) {
@@ -553,6 +759,115 @@ export async function leaveWaitingRoom(room: RoomDoc, uid: string, playerName: s
         updatedAt: serverTimestamp(),
       });
     }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function forfeitActiveRoomDoc(
+  room: RoomDoc,
+  uid: string,
+  playerName: string
+): Promise<void> {
+  if (!room?.id || !uid) return;
+  const ref = doc(db, 'rooms', room.id);
+
+  let latestRoom = room;
+  try {
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    latestRoom = { ...(snap.data() as Omit<RoomDoc, 'id'>), id: snap.id };
+  } catch {
+    // Fall back to passed snapshot
+  }
+
+  if (latestRoom.status === 'finished') return;
+
+  if (latestRoom.status === 'waiting') {
+    await leaveWaitingRoom(latestRoom, uid, playerName);
+    return;
+  }
+
+  if (latestRoom.status !== 'playing') return;
+
+  const updatedSeats: RoomSeat[] = latestRoom.seats.map((seat) => {
+    if (!seat.isBot && seat.uid === uid) {
+      return {
+        ...seat,
+        forfeited: true,
+        autoPlay: true,
+        away: true,
+        completedWithAutoPlay: true,
+      };
+    }
+    return seat;
+  });
+
+  const remainingActiveHumans = updatedSeats.filter(
+    (s) => !s.isBot && !s.forfeited && !isSeatFinished(s, latestRoom.tokens)
+  );
+
+  if (remainingActiveHumans.length === 0) {
+    let nextRank =
+      updatedSeats.reduce(
+        (max, s) => (typeof s.finishRank === 'number' && s.finishRank > max ? s.finishRank : max),
+        0
+      ) + 1;
+    const unfinished = updatedSeats
+      .filter((s) => !isSeatFinished(s, latestRoom.tokens))
+      .sort((a, b) => {
+        const aForf = a.forfeited ? 1 : 0;
+        const bForf = b.forfeited ? 1 : 0;
+        if (aForf !== bForf) return aForf - bForf;
+        return (
+          computeSeatProgressScore(latestRoom.tokens, b.color) -
+          computeSeatProgressScore(latestRoom.tokens, a.color)
+        );
+      });
+    const rankMap = new Map<string, number>();
+    for (const s of unfinished) {
+      rankMap.set(`${s.uid}:${s.color}`, nextRank);
+      nextRank += 1;
+    }
+    const finalSeats: RoomSeat[] = updatedSeats.map((s) => {
+      const assigned = rankMap.get(`${s.uid}:${s.color}`);
+      if (assigned !== undefined) {
+        return {
+          ...s,
+          finishRank: assigned,
+          completedWithAutoPlay:
+            !s.isBot && Boolean(s.completedWithAutoPlay || s.autoPlay || s.away || s.forfeited),
+          away: false,
+          autoPlay: false,
+        };
+      }
+      return s;
+    });
+    const champion = finalSeats.find((s) => s.finishRank === 1) || finalSeats[0];
+    await updateMultiplayerTurn(latestRoom.id, {
+      seats: finalSeats,
+      tokens: latestRoom.tokens,
+      turnIndex: latestRoom.turnIndex,
+      diceValue: 0,
+      turnPhase: 'roll',
+      consecutiveSixes: 0,
+      status: 'finished',
+      winnerColor: latestRoom.winnerColor || champion?.color || '',
+      winnerUid: latestRoom.winnerUid || champion?.uid || '',
+      lastActionText: clampString(`${playerName} exited — match ended.`, 120),
+      turnCount: latestRoom.turnCount + 1,
+    });
+    return;
+  }
+
+  // Other real players are still playing — mark this seat forfeited/Auto-Play so they continue smoothly
+  const path = `rooms/${latestRoom.id}`;
+  try {
+    await updateDoc(ref, {
+      seats: updatedSeats,
+      lastActionText: clampString(`${playerName} exited the match — Auto-Play taking over.`, 120),
+      updatedAt: serverTimestamp(),
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -661,7 +976,7 @@ export async function sendRoomMessage(
 export async function fetchPublicLeaderboard(): Promise<PlayerProfile[]> {
   const path = 'profiles';
   try {
-    const q = query(collection(db, 'profiles'), where('isPublic', '==', true), limit(50));
+    const q = query(collection(db, 'profiles'), where('isPublic', '==', true), limit(80));
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as PlayerProfile);
   } catch (error) {
@@ -819,10 +1134,12 @@ export function subscribeFriendships(
   );
 }
 
+export type FriendTarget = Pick<PlayerProfile, 'uid' | 'displayName' | 'avatarId'>;
+
 export async function sendFriendRequestDoc(
   me: PlayerProfile,
-  target: PlayerProfile
-): Promise<void> {
+  target: FriendTarget
+): Promise<'sent' | 'accepted'> {
   if (me.uid === target.uid) {
     throw new Error('You cannot add yourself as a friend.');
   }
@@ -841,7 +1158,7 @@ export async function sendFriendRequestDoc(
           status: 'accepted',
           updatedAt: serverTimestamp(),
         });
-        return;
+        return 'accepted';
       }
       throw new Error(`Friend request already sent to ${target.displayName}.`);
     }
@@ -858,6 +1175,7 @@ export async function sendFriendRequestDoc(
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+    return 'sent';
   } catch (error) {
     if (
       error instanceof Error &&

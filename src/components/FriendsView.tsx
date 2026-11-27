@@ -5,6 +5,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Shuffle,
   Trash2,
   UserCheck,
   UserPlus,
@@ -47,7 +48,8 @@ export function FriendsView() {
   } = useApp();
 
   const [query, setQuery] = useState('');
-  const [searchFocused, setSearchFocused] = useState(false);
+  const [directoryOpen, setDirectoryOpen] = useState(false);
+  const [shuffleSeed, setShuffleSeed] = useState(() => Math.floor(Math.random() * 10_000));
   const [busyUid, setBusyUid] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -88,17 +90,31 @@ export function FriendsView() {
     return map;
   }, [leaderboard]);
 
+  const unconnectedPlayers = useMemo(
+    () => leaderboard.filter((p) => !connectedUids.has(p.uid)),
+    [leaderboard, connectedUids]
+  );
+
   const discoverResults = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const candidates = leaderboard.filter((p) => !connectedUids.has(p.uid));
-    if (!q) return candidates.slice(0, 5);
-    return candidates
-      .filter((p) => {
-        const tag = formatPlayerTag(p.uid, p.displayName).toLowerCase();
-        return p.displayName.toLowerCase().includes(q) || tag.includes(q);
-      })
-      .slice(0, 8);
-  }, [leaderboard, connectedUids, query]);
+    if (!q) return unconnectedPlayers;
+    return unconnectedPlayers.filter((p) => {
+      const tag = formatPlayerTag(p.uid, p.displayName).toLowerCase();
+      return p.displayName.toLowerCase().includes(q) || tag.includes(q);
+    });
+  }, [unconnectedPlayers, query]);
+
+  const randomSuggestions = useMemo(() => {
+    if (unconnectedPlayers.length === 0) return [];
+    const copy = [...unconnectedPlayers];
+    let s = shuffleSeed || 1;
+    for (let i = copy.length - 1; i > 0; i--) {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      const j = s % (i + 1);
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy.slice(0, 4);
+  }, [unconnectedPlayers, shuffleSeed]);
 
   const handleCopyTag = async () => {
     try {
@@ -119,6 +135,10 @@ export function FriendsView() {
     }
   };
 
+  const handleShuffleRandom = () => {
+    setShuffleSeed((prev) => prev + 1 + Math.floor(Math.random() * 997));
+  };
+
   const handleInviteFriend = async (friendUid: string, friendName: string) => {
     setBusyUid(friendUid);
     try {
@@ -132,7 +152,6 @@ export function FriendsView() {
     setBusyUid(target.uid);
     try {
       await sendFriendRequest(target);
-      setQuery('');
     } finally {
       setBusyUid(null);
     }
@@ -162,43 +181,49 @@ export function FriendsView() {
         </button>
       </div>
 
-      {/* Search Bar + Add Button */}
-      <div className="flex items-center gap-2.5">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-[#64748B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={query}
-            onFocus={() => setSearchFocused(true)}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name or #tag"
-            className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-white border-2 border-[#111827] text-sm font-medium text-[#111827] placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/25"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#111827] cursor-pointer"
-              aria-label="Clear search"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+      {/* Search Bar + Always-Visible Browse Signed-In Players CTA */}
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-[#64748B] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={query}
+              onFocus={() => setDirectoryOpen(true)}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or #tag"
+              className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-white border-2 border-[#111827] text-sm font-medium text-[#111827] placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]/25"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#111827] cursor-pointer"
+                aria-label="Clear search"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setSearchFocused((v) => !v);
-            if (isSignedIn) handleRefreshDirectory();
-          }}
-          className="h-[46px] px-4 rounded-2xl game-btn-blue inline-flex items-center justify-center gap-1.5 font-display font-bold text-xs cursor-pointer shrink-0"
-          aria-label="Find players to add"
-          title="Find & add players"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span className="hidden sm:inline">Find</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!isSignedIn) {
+                signInWithGoogle();
+                return;
+              }
+              setDirectoryOpen((v) => !v);
+              handleRefreshDirectory();
+            }}
+            className="h-[46px] px-4 rounded-2xl game-btn-gold inline-flex items-center justify-center gap-1.5 font-display font-extrabold text-xs cursor-pointer shrink-0"
+            aria-label="Browse signed-in players"
+            title="Browse all signed-in players"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>{directoryOpen ? 'Hide Players' : 'Browse Signed-In Players'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Sign-in Prompt if Guest */}
@@ -209,7 +234,7 @@ export function FriendsView() {
               Sign in to build your Ludo squad
             </h2>
             <p className="text-xs text-[#475569] mt-1">
-              Add friends by name or #tag and receive live table invites right on your screen.
+              Add friends by name or #tag, discover random players, and receive live table invites.
             </p>
           </div>
           <button
@@ -222,14 +247,16 @@ export function FriendsView() {
         </div>
       )}
 
-      {/* Search / Player Directory Results Panel */}
-      {isSignedIn && (query.trim().length > 0 || searchFocused) && (
+      {/* Search / Full Signed-In Player Directory Panel */}
+      {isSignedIn && (query.trim().length > 0 || directoryOpen) && (
         <section className="studio-card-sm rounded-3xl p-4 space-y-2.5 animate-pop-in">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2">
             <span className="font-display text-xs font-extrabold uppercase tracking-wide text-[#475569]">
-              {query.trim() ? 'Matching Players' : 'Discover Players'}
+              {query.trim()
+                ? `Matching Players (${discoverResults.length})`
+                : `Signed-In Players (${discoverResults.length})`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <button
                 type="button"
                 onClick={handleRefreshDirectory}
@@ -240,9 +267,12 @@ export function FriendsView() {
               </button>
               <button
                 type="button"
-                onClick={() => setSearchFocused(false)}
+                onClick={() => {
+                  setDirectoryOpen(false);
+                  setQuery('');
+                }}
                 className="p-1 text-[#64748B] hover:text-[#111827] cursor-pointer"
-                aria-label="Hide player search"
+                aria-label="Hide player directory"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -254,7 +284,7 @@ export function FriendsView() {
               No matching signed-in players found. Share your tag <strong>{myTag}</strong> so friends can add you!
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[340px] overflow-y-auto pr-0.5">
               {discoverResults.map((p) => {
                 const pTag = formatPlayerTag(p.uid, p.displayName);
                 const pRate = p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : 0;
@@ -292,6 +322,80 @@ export function FriendsView() {
               })}
             </div>
           )}
+        </section>
+      )}
+
+      {/* Discover Random Players Card — Always Available (Even After Adding Friends!) */}
+      {isSignedIn && randomSuggestions.length > 0 && !directoryOpen && !query.trim() && (
+        <section className="studio-card-sm rounded-3xl p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-sm sm:text-base font-extrabold text-[#111827]">
+                Discover Random Players
+              </h2>
+              <p className="text-[11px] text-[#64748B]">
+                Add active signed-in players or shuffle for fresh picks.
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleShuffleRandom}
+                className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-white inline-flex items-center gap-1 cursor-pointer"
+                title="Shuffle random players"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                <span>Shuffle</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDirectoryOpen(true);
+                  handleRefreshDirectory();
+                }}
+                className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer"
+              >
+                All ({unconnectedPlayers.length})
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {randomSuggestions.map((p) => {
+              const pRate = p.gamesPlayed > 0 ? Math.round((p.wins / p.gamesPlayed) * 100) : 0;
+              return (
+                <div
+                  key={p.uid}
+                  className="flex items-center justify-between gap-2.5 p-2.5 rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1]"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <PlayerAvatar
+                      avatarId={p.avatarId}
+                      frameId={p.avatarFrame}
+                      size="xs"
+                      alt={p.displayName}
+                    />
+                    <div className="min-w-0">
+                      <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] truncate">
+                        {p.displayName}
+                      </div>
+                      <div className="text-[10px] font-mono text-[#64748B] truncate">
+                        {p.elo} pts · {pRate}% win
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busyUid === p.uid}
+                    onClick={() => handleAddPlayer(p)}
+                    className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer disabled:opacity-60 shrink-0"
+                  >
+                    {busyUid === p.uid ? '...' : '+ Add'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 
@@ -464,11 +568,26 @@ export function FriendsView() {
 
       {/* Your Squad (Accepted Friends) */}
       <section className="space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg font-extrabold text-[#111827]">Your squad</h2>
-          <span className="text-xs font-semibold text-[#64748B]">
-            {acceptedFriends.length} {acceptedFriends.length === 1 ? 'friend' : 'friends'}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-lg font-extrabold text-[#111827]">Your squad</h2>
+            <span className="text-xs font-semibold text-[#64748B]">
+              {acceptedFriends.length} {acceptedFriends.length === 1 ? 'friend' : 'friends'}
+            </span>
+          </div>
+          {isSignedIn && (
+            <button
+              type="button"
+              onClick={() => {
+                setDirectoryOpen(true);
+                handleRefreshDirectory();
+              }}
+              className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-gold inline-flex items-center gap-1 cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Browse Signed-In Players</span>
+            </button>
+          )}
         </div>
 
         {acceptedFriends.length === 0 ? (
@@ -480,14 +599,14 @@ export function FriendsView() {
               No friends in your squad yet
             </div>
             <p className="text-xs text-[#64748B] max-w-sm mx-auto">
-              Tap the search bar above to find players by name or #tag, or share your tag{' '}
+              Tap the search bar or pick random signed-in players above, or share your tag{' '}
               <strong className="text-[#111827] font-mono">{myTag}</strong>.
             </p>
             {isSignedIn && (
               <button
                 type="button"
                 onClick={() => {
-                  setSearchFocused(true);
+                  setDirectoryOpen(true);
                   handleRefreshDirectory();
                 }}
                 className="mt-1 px-4 py-2 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer"

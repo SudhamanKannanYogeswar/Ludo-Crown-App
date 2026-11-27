@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   auth,
@@ -7,6 +8,16 @@ import {
   signOutGoogleAuto,
   testConnection,
 } from '../firebase';
+import {
+  applyTokenMove,
+  chooseAiTokenMove,
+  findNextActiveTurnIndex,
+  getMovableTokenIndices,
+  isSeatFinished,
+  resolveSeatFinishState,
+  rollDiceWithPity,
+  updateSeatDryRolls,
+} from '../game/ludoEngine';
 import {
   ActiveAdModalState,
   ADMOB_CONFIG,
@@ -37,6 +48,7 @@ import {
 import { listenForIncomingDeepLinks } from '../services/shareService';
 import {
   acceptFriendRequestDoc,
+  cleanupOwnStaleWaitingRooms,
   completeTournamentDoc,
   createDefaultProfile,
   createDefaultWallet,
@@ -46,6 +58,7 @@ import {
   fetchPublicLeaderboard,
   fetchPublicTournaments,
   findOrCreateQuickMatch,
+  forfeitActiveRoomDoc,
   joinRoomByCode,
   joinTournamentDoc,
   leaveWaitingRoom,
@@ -62,10 +75,13 @@ import {
   subscribeProfile,
   subscribeRoom,
   subscribeRoomMessages,
+  subscribeUserActiveRooms,
   subscribeWallet,
+  touchWaitingRoomHeartbeat,
   updateMultiplayerTurn,
   updateProfileCustomization,
   updateProfileStats,
+  updateRoomSeatPresence,
   updateWalletAdReward,
   updateWalletEconomy,
   updateWalletRewardsAndChallenges,
@@ -90,6 +106,7 @@ import {
   PlayerProfile,
   RoomDoc,
   RoomInviteDoc,
+  RoomSeat,
   TokenPositions,
   TournamentDoc,
   UserWallet,
@@ -98,6 +115,7 @@ import {
 const GUEST_PROFILE_KEY = 'ludo_crown_guest_profile_v1';
 const GUEST_WALLET_KEY = 'ludo_crown_guest_wallet_v1';
 const BACKDROP_THEME_KEY = 'ludo_crown_backdrop_theme_v1';
+const LAST_ACTIVE_ROOM_KEY = 'ludo_crown_last_active_room_v1';
 
 export interface OfflineMatchConfig {
   mode: GameMode;
@@ -106,6 +124,7 @@ export interface OfflineMatchConfig {
   passAndPlay?: {
     playerCount: 2 | 3 | 4;
     playerNames: string[];
+    seatIsBot?: boolean[];
   };
   tournamentContext?: {
     tournamentId: string;
@@ -120,6 +139,12 @@ interface ToastMessage {
   id: number;
   text: string;
   tone: 'info' | 'success' | 'error';
+}
+
+export interface ActiveMatchConflict {
+  actionLabel: string;
+  room: RoomDoc;
+  onConfirmNewMatch: () => Promise<void> | void;
 }
 
 interface AppContextValue {
@@ -148,16 +173,27 @@ interface AppContextValue {
   grantWheelReward: (coinsDelta: number, gemsDelta: number, ticketsDelta: number) => Promise<void>;
   recordGameplayEvent: (delta: { rollSixes?: number; captures?: number }) => void;
   recordMatchCompletion: (summary: MatchSummary) => Promise<void>;
-  // Multiplayer Rooms
+  // Multiplayer Rooms & Network Resilience
+  networkOnline: boolean;
+  reconnecting: boolean;
+  activeRoomId: string | null;
   activeRoom: RoomDoc | null;
+  myActiveRooms: RoomDoc[];
+  blockingActiveRoom: RoomDoc | null;
+  activeMatchConflict: ActiveMatchConflict | null;
+  dismissActiveMatchConflict: () => void;
+  confirmExitAndStartNewMatch: () => Promise<void>;
   roomMessages: ChatMessageDoc[];
   openRooms: RoomDoc[];
   refreshOpenRooms: () => Promise<void>;
   startQuickMatchmaking: (opts: { mode: GameMode; maxPlayers: 2 | 4; entryStake: number }) => Promise<void>;
   createPrivateRoom: (opts: { mode: GameMode; maxPlayers: 2 | 4; entryStake: number }) => Promise<void>;
   joinRoom: (code: string) => Promise<void>;
+  rejoinActiveRoom: (roomId: string) => Promise<void>;
+  setMySeatAutoPlay: (enabled: boolean) => Promise<void>;
   hostStartRoom: (fillBots: boolean) => Promise<void>;
   submitMultiplayerTurn: (payload: {
+    seats?: RoomSeat[];
     tokens: TokenPositions;
     turnIndex: number;
     diceValue: number;
@@ -171,6 +207,7 @@ interface AppContextValue {
   }) => Promise<void>;
   sendChat: (text: string, kind: 'chat' | 'emote') => Promise<void>;
   exitActiveRoom: () => Promise<void>;
+  forfeitActiveRoom: (roomId?: string) => Promise<void>;
   rematchOnlineRoom: (finishedRoom: RoomDoc) => Promise<void>;
   pendingDeepLinkRoomCode: string | null;
   clearPendingDeepLinkRoom: () => void;
@@ -188,7 +225,9 @@ interface AppContextValue {
   // Friends & Real-Time Room Invites
   friendships: FriendshipDoc[];
   incomingInvites: RoomInviteDoc[];
-  sendFriendRequest: (target: PlayerProfile) => Promise<void>;
+  sendFriendRequest: (
+    target: Pick<PlayerProfile, 'uid' | 'displayName' | 'avatarId'>
+  ) => Promise<void>;
   acceptFriend: (friendshipId: string, friendName: string) => Promise<void>;
   removeFriend: (friendshipId: string) => Promise<void>;
   inviteFriendToPlay: (friendUid: string, friendName: string) => Promise<void>;
@@ -288,11 +327,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const [networkOnline, setNetworkOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [reconnecting, setReconnecting] = useState(false);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [activeRoom, setActiveRoom] = useState<RoomDoc | null>(null);
+  const [myActiveRooms, setMyActiveRooms] = useState<RoomDoc[]>([]);
+  const [activeMatchConflict, setActiveMatchConflict] = useState<ActiveMatchConflict | null>(null);
   const [roomMessages, setRoomMessages] = useState<ChatMessageDoc[]>([]);
   const [openRooms, setOpenRooms] = useState<RoomDoc[]>([]);
   const [offlineMatch, setOfflineMatch] = useState<OfflineMatchConfig | null>(null);
+  const bypassActiveMatchGuardRef = React.useRef<boolean>(false);
   const [pendingDeepLinkRoomCode, setPendingDeepLinkRoomCode] = useState<string | null>(() => {
     try {
       return sessionStorage.getItem('ludo_crown_pending_join_code') || null;
@@ -308,6 +354,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const seenInviteIdsRef = React.useRef<Set<string>>(new Set());
   const seenFriendStatusRef = React.useRef<Map<string, string>>(new Map());
   const friendsInitializedRef = React.useRef<boolean>(false);
+  const notifiedActiveRoomIdsRef = React.useRef<Set<string>>(new Set());
+  const bgAutoPlayBusyRef = React.useRef<Set<string>>(new Set());
+  const prevNetworkOnlineRef = React.useRef<boolean>(networkOnline);
+  const activeTabRef = React.useRef<ActiveTab>(activeTab);
+  activeTabRef.current = activeTab;
+  const activeRoomRef = React.useRef<RoomDoc | null>(activeRoom);
+  activeRoomRef.current = activeRoom;
+  const profileDisplayNameRef = React.useRef<string>(profile.displayName);
+  profileDisplayNameRef.current = profile.displayName;
 
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(() =>
     loadNotificationPrefs()
@@ -365,7 +420,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setWallet(loadGuestWallet());
         setActiveRoomId(null);
         setActiveRoom(null);
+        setMyActiveRooms([]);
         setRoomMessages([]);
+        notifiedActiveRoomIdsRef.current.clear();
       }
       setAuthReady(true);
     });
@@ -450,6 +507,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
     });
+    const unsubMyActiveRooms = subscribeUserActiveRooms(user.uid, (rooms) => {
+      setMyActiveRooms(rooms);
+      // Notify player on Home/menus when a live running room is detected (e.g. after reload or reconnect)
+      if (activeTabRef.current !== 'play') {
+        const runningMatch = rooms.find((r) => {
+          if (r.status !== 'playing') return false;
+          const mySeat = r.seats.find((s) => !s.isBot && s.uid === user.uid);
+          return Boolean(mySeat && !isSeatFinished(mySeat, r.tokens));
+        });
+        if (runningMatch && !notifiedActiveRoomIdsRef.current.has(runningMatch.id)) {
+          notifiedActiveRoomIdsRef.current.add(runningMatch.id);
+          showToast(
+            `Live match running in table ${runningMatch.roomCode}! Tap Rejoin on Home.`,
+            'info'
+          );
+        }
+      }
+    });
+
     // Pre-fetch public players for Friends & Ranks
     fetchPublicLeaderboard()
       .then((rows) => setLeaderboard(rows))
@@ -460,8 +536,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubWallet();
       unsubFriends();
       unsubInvites();
+      unsubMyActiveRooms();
     };
   }, [user, showToast]);
+
+  // Track browser/mobile network connectivity & automatic reconnection
+  useEffect(() => {
+    const handleOnline = () => setNetworkOnline(true);
+    const handleOffline = () => setNetworkOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const wasOnline = prevNetworkOnlineRef.current;
+    prevNetworkOnlineRef.current = networkOnline;
+    if (wasOnline === networkOnline) return;
+
+    if (!networkOnline) {
+      if (activeRoomRef.current?.status === 'playing') {
+        showToast('Network lost — Auto-Play will cover your turns until you reconnect.', 'error');
+      }
+      return;
+    }
+
+    // Recovered from network drop
+    setReconnecting(true);
+    const clearTimer = setTimeout(() => setReconnecting(false), 1800);
+    const currentRoom = activeRoomRef.current;
+    if (user && currentRoom && currentRoom.status === 'playing' && activeTabRef.current === 'play') {
+      updateRoomSeatPresence(
+        currentRoom.id,
+        user.uid,
+        { autoPlay: false, away: false, lastSeenMs: Date.now() },
+        `${profileDisplayNameRef.current} reconnected!`
+      ).catch(() => {});
+      showToast(`Back online! Resumed live table ${currentRoom.roomCode}.`, 'success');
+    } else if (user) {
+      showToast('Back online! Cloud sync restored.', 'success');
+    }
+    return () => clearTimeout(clearTimer);
+  }, [networkOnline, user, showToast]);
+
+  // Persist last active room ID locally for fast mobile recovery
+  useEffect(() => {
+    try {
+      if (activeRoomId && activeRoom?.status !== 'finished') {
+        localStorage.setItem(LAST_ACTIVE_ROOM_KEY, activeRoomId);
+      } else if (!activeRoomId || activeRoom?.status === 'finished') {
+        localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [activeRoomId, activeRoom?.status]);
 
   // Real-time Active Room subscription
   useEffect(() => {
@@ -478,6 +611,355 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsub();
   }, [user, activeRoomId]);
+
+  // Waiting-room host heartbeat (every 15s) so live public lobbies stay fresh & abandoned ones auto-expire
+  useEffect(() => {
+    if (!user || !activeRoom || activeRoom.status !== 'waiting' || activeRoom.hostUid !== user.uid) {
+      return;
+    }
+    const roomId = activeRoom.id;
+    touchWaitingRoomHeartbeat(roomId);
+    const interval = setInterval(() => {
+      if (navigator.onLine) {
+        touchWaitingRoomHeartbeat(roomId);
+      }
+    }, 15_000);
+
+    const handlePageHide = () => {
+      leaveWaitingRoom(activeRoom, user.uid, profile.displayName).catch(() => {});
+    };
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+    };
+  }, [user, activeRoom?.id, activeRoom?.status, activeRoom?.hostUid, profile.displayName]);
+
+  // Playing-room seat presence heartbeat + mobile background/foreground auto-play handover
+  useEffect(() => {
+    if (!user || !activeRoom || activeRoom.status !== 'playing' || activeTab !== 'play') {
+      return;
+    }
+    const roomId = activeRoom.id;
+    const uid = user.uid;
+
+    const sendHeartbeat = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      updateRoomSeatPresence(roomId, uid, { away: false, lastSeenMs: Date.now() }).catch(() => {});
+    };
+
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 12_000);
+
+    const markBackgrounded = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      const latestRoom = activeRoomRef.current;
+      const mySeatNow = latestRoom?.seats.find((s) => !s.isBot && s.uid === uid);
+      if (mySeatNow && latestRoom && isSeatFinished(mySeatNow, latestRoom.tokens)) return;
+      updateRoomSeatPresence(
+        roomId,
+        uid,
+        { away: true, autoPlay: true },
+        `${profileDisplayNameRef.current} stepped away — Auto-Play active.`
+      ).catch(() => {});
+    };
+
+    const markForegrounded = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      const latestRoom = activeRoomRef.current;
+      const mySeatNow = latestRoom?.seats.find((s) => !s.isBot && s.uid === uid);
+      if (mySeatNow && latestRoom && isSeatFinished(mySeatNow, latestRoom.tokens)) {
+        updateRoomSeatPresence(roomId, uid, { away: false, autoPlay: false, lastSeenMs: Date.now() }).catch(
+          () => {}
+        );
+        return;
+      }
+      updateRoomSeatPresence(
+        roomId,
+        uid,
+        { away: false, autoPlay: false, lastSeenMs: Date.now() },
+        `${profileDisplayNameRef.current} is back in control!`
+      ).catch(() => {});
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        markBackgrounded();
+      } else {
+        setNetworkOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+        markForegrounded();
+      }
+    };
+
+    const handlePageHide = () => {
+      markBackgrounded();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+
+    let capacitorHandle: { remove: () => Promise<void> } | null = null;
+    if (isCapacitorNativeApp()) {
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) {
+          markBackgrounded();
+        } else {
+          setNetworkOnline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+          markForegrounded();
+        }
+      })
+        .then((handle) => {
+          capacitorHandle = handle;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+      capacitorHandle?.remove().catch(() => {});
+    };
+  }, [user, activeRoom?.id, activeRoom?.status, activeTab]);
+
+  // Background Online Auto-Play Keeper:
+  // If the player left an active online match and stayed online on Home/other tabs,
+  // keep the match progressing seamlessly until they tap Rejoin (even if no other human is inside the room).
+  useEffect(() => {
+    if (!user || !networkOnline || myActiveRooms.length === 0) return;
+
+    const awayPlayingRooms = myActiveRooms.filter((room) => {
+      if (room.status !== 'playing') return false;
+      const isViewingThisRoom = activeTab === 'play' && activeRoomId === room.id;
+      if (isViewingThisRoom) return false;
+      const mySeat = room.seats.find((s) => !s.isBot && s.uid === user.uid);
+      return Boolean(mySeat);
+    });
+
+    if (awayPlayingRooms.length === 0) return;
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    for (const room of awayPlayingRooms) {
+      const currentSeat = room.seats[room.turnIndex] || room.seats[0];
+      if (!currentSeat) continue;
+
+      const currentAlreadyFinished = isSeatFinished(currentSeat, room.tokens);
+      const now = Date.now();
+      const seatStale =
+        !currentSeat.isBot &&
+        currentSeat.lastSeenMs !== undefined &&
+        now - currentSeat.lastSeenMs > 22_000;
+      const turnNeedsAutoPlay =
+        currentAlreadyFinished ||
+        currentSeat.isBot ||
+        Boolean(currentSeat.autoPlay) ||
+        Boolean(currentSeat.away) ||
+        currentSeat.uid === user.uid ||
+        seatStale;
+
+      if (!turnNeedsAutoPlay) continue;
+
+      const otherHumanActivelyInRoom = room.seats.some(
+        (s) =>
+          !s.isBot &&
+          s.uid !== user.uid &&
+          !s.away &&
+          !s.autoPlay &&
+          (s.lastSeenMs === undefined || now - s.lastSeenMs < 25_000)
+      );
+
+      // If another human is currently inside MatchArena, let them drive immediately;
+      // otherwise this online background client keeps the game moving cleanly!
+      const delayMs = otherHumanActivelyInRoom
+        ? 7800
+        : room.hostUid === user.uid
+          ? 2100
+          : 4400;
+
+      const timer = setTimeout(async () => {
+        if (bgAutoPlayBusyRef.current.has(room.id)) return;
+        if (activeTabRef.current === 'play' && activeRoomRef.current?.id === room.id) return;
+        bgAutoPlayBusyRef.current.add(room.id);
+
+        try {
+          const activeColors = room.seats.map((s) => s.color);
+          const preservedWinnerColor = room.winnerColor || '';
+          const preservedWinnerUid = room.winnerUid || '';
+
+          if (currentAlreadyFinished) {
+            const nextIdx = findNextActiveTurnIndex(room.seats, room.tokens, room.turnIndex);
+            await updateMultiplayerTurn(room.id, {
+              tokens: room.tokens,
+              turnIndex: nextIdx,
+              diceValue: 0,
+              turnPhase: 'roll',
+              consecutiveSixes: 0,
+              status: 'playing',
+              winnerColor: preservedWinnerColor,
+              winnerUid: preservedWinnerUid,
+              lastActionText: `${room.seats[nextIdx]?.name || 'Next player'}'s turn!`,
+              turnCount: room.turnCount + 1,
+            });
+            return;
+          }
+
+          const updatedSeatsForAuto: RoomSeat[] = room.seats.map((s) =>
+            !s.isBot && s.uid === currentSeat.uid && !s.autoPlay && !isSeatFinished(s, room.tokens)
+              ? { ...s, autoPlay: true, away: true }
+              : s
+          );
+          const autoSeatsChanged = updatedSeatsForAuto.some((s, idx) => s !== room.seats[idx]);
+          const actorLabel = currentSeat.isBot
+            ? currentSeat.name
+            : `${currentSeat.name} (Auto)`;
+
+          if (room.turnPhase === 'roll') {
+            const rolled = rollDiceWithPity(room.tokens, currentSeat.color, currentSeat.dryRolls || 0);
+            const nextSixes = rolled === 6 ? room.consecutiveSixes + 1 : 0;
+
+            if (nextSixes >= 3) {
+              const dryReset = updateSeatDryRolls(updatedSeatsForAuto, currentSeat, 0);
+              const nextIdx = findNextActiveTurnIndex(dryReset.seats, room.tokens, room.turnIndex);
+              await updateMultiplayerTurn(room.id, {
+                ...(autoSeatsChanged || dryReset.changed ? { seats: dryReset.seats } : {}),
+                tokens: room.tokens,
+                turnIndex: nextIdx,
+                diceValue: 0,
+                turnPhase: 'roll',
+                consecutiveSixes: 0,
+                status: 'playing',
+                winnerColor: preservedWinnerColor,
+                winnerUid: preservedWinnerUid,
+                lastActionText: `${actorLabel} rolled three 6s — ${room.seats[nextIdx].name}'s turn.`,
+                turnCount: room.turnCount + 1,
+              });
+              return;
+            }
+
+            const legal = getMovableTokenIndices(room.tokens, currentSeat.color, rolled);
+            if (legal.length === 0) {
+              const dryInc = updateSeatDryRolls(
+                updatedSeatsForAuto,
+                currentSeat,
+                (currentSeat.dryRolls || 0) + 1
+              );
+              const nextIdx = findNextActiveTurnIndex(dryInc.seats, room.tokens, room.turnIndex);
+              await updateMultiplayerTurn(room.id, {
+                ...(autoSeatsChanged || dryInc.changed ? { seats: dryInc.seats } : {}),
+                tokens: room.tokens,
+                turnIndex: nextIdx,
+                diceValue: 0,
+                turnPhase: 'roll',
+                consecutiveSixes: 0,
+                status: 'playing',
+                winnerColor: preservedWinnerColor,
+                winnerUid: preservedWinnerUid,
+                lastActionText: `${actorLabel} rolled ${rolled} (no move). ${room.seats[nextIdx].name}'s turn!`,
+                turnCount: room.turnCount + 1,
+              });
+              return;
+            }
+
+            const dryReset = updateSeatDryRolls(updatedSeatsForAuto, currentSeat, 0);
+            await updateMultiplayerTurn(room.id, {
+              ...(autoSeatsChanged || dryReset.changed ? { seats: dryReset.seats } : {}),
+              tokens: room.tokens,
+              turnIndex: room.turnIndex,
+              diceValue: rolled,
+              turnPhase: 'move',
+              consecutiveSixes: nextSixes,
+              status: 'playing',
+              winnerColor: preservedWinnerColor,
+              winnerUid: preservedWinnerUid,
+              lastActionText: `${actorLabel} rolled ${rolled} — moving pawn...`,
+              turnCount: room.turnCount,
+            });
+          } else {
+            const chosen = chooseAiTokenMove(
+              room.tokens,
+              currentSeat.color,
+              room.diceValue,
+              activeColors,
+              'tactical'
+            );
+            if (chosen < 0) {
+              const nextIdx = findNextActiveTurnIndex(updatedSeatsForAuto, room.tokens, room.turnIndex);
+              await updateMultiplayerTurn(room.id, {
+                ...(autoSeatsChanged ? { seats: updatedSeatsForAuto } : {}),
+                tokens: room.tokens,
+                turnIndex: nextIdx,
+                diceValue: 0,
+                turnPhase: 'roll',
+                consecutiveSixes: 0,
+                status: 'playing',
+                winnerColor: preservedWinnerColor,
+                winnerUid: preservedWinnerUid,
+                lastActionText: `${actorLabel} had no legal move — ${room.seats[nextIdx].name}'s turn.`,
+                turnCount: room.turnCount + 1,
+              });
+              return;
+            }
+
+            const outcome = applyTokenMove(
+              room.tokens,
+              currentSeat.color,
+              chosen,
+              room.diceValue,
+              actorLabel,
+              activeColors
+            );
+
+            const resolved = resolveSeatFinishState({
+              seats: updatedSeatsForAuto,
+              nextTokens: outcome.nextTokens,
+              actorSeat: currentSeat,
+              actorDisplayName: actorLabel,
+              turnIndex: room.turnIndex,
+              bonusTurn: outcome.bonusTurn,
+              baseActionText: outcome.actionText,
+              existingWinnerColor: preservedWinnerColor,
+              existingWinnerUid: preservedWinnerUid,
+              actorUsedAutoPlay: !currentSeat.isBot,
+            });
+
+            const shouldPatchSeats = autoSeatsChanged || resolved.seatsChanged;
+
+            await updateMultiplayerTurn(room.id, {
+              ...(shouldPatchSeats ? { seats: resolved.updatedSeats } : {}),
+              tokens: outcome.nextTokens,
+              turnIndex: resolved.nextTurnIndex,
+              diceValue: 0,
+              turnPhase: 'roll',
+              consecutiveSixes:
+                outcome.bonusTurn && !resolved.actorJustFinished && !resolved.matchCompleted
+                  ? room.consecutiveSixes
+                  : 0,
+              status: resolved.matchCompleted ? 'finished' : 'playing',
+              winnerColor: resolved.winnerColor,
+              winnerUid: resolved.winnerUid,
+              lastActionText: resolved.actionText,
+              turnCount: room.turnCount + 1,
+            });
+          }
+        } catch {
+          // Benign if another player moved first or network flickered
+        } finally {
+          bgAutoPlayBusyRef.current.delete(room.id);
+        }
+      }, delayMs);
+
+      timers.push(timer);
+    }
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+    };
+  }, [user, networkOnline, myActiveRooms, activeTab, activeRoomId]);
 
   // Real-time Chat Messages subscription
   useEffect(() => {
@@ -818,6 +1300,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const recordMatchCompletion = useCallback(
     async (summary: MatchSummary) => {
+      if (summary.autoPlayForfeitedRewards) {
+        setMatchesSinceLastInterstitial((c) => c + 1);
+        showToast('No rewards earned — match completed in Auto-Play mode.', 'info');
+        return;
+      }
+
       const today = getTodayDateString();
       const nextGames = profile.gamesPlayed + 1;
       const nextWins = profile.wins + (summary.won ? 1 : 0);
@@ -882,18 +1370,116 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [profile, wallet, user]
+    [profile, wallet, user, showToast]
   );
 
   // =========================================================================
   // MULTIPLAYER & MATCHMAKING ACTIONS
   // =========================================================================
 
+  // Enforce at most 1 active online match per player at any time
+  const blockingActiveRoom = useMemo<RoomDoc | null>(() => {
+    if (!user) return null;
+    const candidates: RoomDoc[] = [];
+    if (activeRoom) candidates.push(activeRoom);
+    for (const r of myActiveRooms) {
+      if (!candidates.some((c) => c.id === r.id)) {
+        candidates.push(r);
+      }
+    }
+    for (const room of candidates) {
+      if (room.status === 'finished') continue;
+      const mySeat = room.seats.find((s) => !s.isBot && s.uid === user.uid);
+      if (mySeat?.forfeited) continue;
+      if (room.status === 'waiting') return room;
+      if (room.status === 'playing' && mySeat && !isSeatFinished(mySeat, room.tokens)) {
+        return room;
+      }
+    }
+    return null;
+  }, [user, activeRoom, myActiveRooms]);
+
+  const forfeitActiveRoom = useCallback(
+    async (roomId?: string) => {
+      if (!user) return;
+      const target =
+        (roomId
+          ? activeRoom?.id === roomId
+            ? activeRoom
+            : myActiveRooms.find((r) => r.id === roomId)
+          : activeRoom || blockingActiveRoom) || null;
+      if (!target) return;
+
+      try {
+        await forfeitActiveRoomDoc(target, user.uid, profile.displayName);
+      } catch {
+        // Proceed with local cleanup even on transient network hiccup
+      }
+
+      setMyActiveRooms((prev) => prev.filter((r) => r.id !== target.id));
+      if (activeRoomId === target.id || activeRoom?.id === target.id) {
+        setActiveRoomId(null);
+        setActiveRoom(null);
+        setRoomMessages([]);
+        if (activeTabRef.current === 'play') {
+          setActiveTab('lobby');
+        }
+      }
+      showToast(
+        target.status === 'waiting'
+          ? `Closed waiting table ${target.roomCode}.`
+          : `Exited match ${target.roomCode} (no rewards earned).`,
+        'info'
+      );
+    },
+    [user, activeRoom, activeRoomId, myActiveRooms, blockingActiveRoom, profile.displayName, showToast]
+  );
+
+  const dismissActiveMatchConflict = useCallback(() => {
+    setActiveMatchConflict(null);
+  }, []);
+
+  const confirmExitAndStartNewMatch = useCallback(async () => {
+    const conflict = activeMatchConflict;
+    if (!conflict) return;
+    setActiveMatchConflict(null);
+    await forfeitActiveRoom(conflict.room.id);
+    bypassActiveMatchGuardRef.current = true;
+    try {
+      await conflict.onConfirmNewMatch();
+    } finally {
+      bypassActiveMatchGuardRef.current = false;
+    }
+  }, [activeMatchConflict, forfeitActiveRoom]);
+
+  const guardSingleActiveMatch = useCallback(
+    (
+      actionLabel: string,
+      onConfirmNewMatch: () => Promise<void> | void,
+      allowedRoomCode?: string
+    ): boolean => {
+      if (bypassActiveMatchGuardRef.current) return false;
+      if (!blockingActiveRoom) return false;
+      const cleanAllowed = allowedRoomCode?.trim().toUpperCase();
+      if (cleanAllowed && blockingActiveRoom.roomCode === cleanAllowed) {
+        return false;
+      }
+      setActiveMatchConflict({
+        actionLabel,
+        room: blockingActiveRoom,
+        onConfirmNewMatch,
+      });
+      return true;
+    },
+    [blockingActiveRoom]
+  );
+
   const refreshOpenRooms = useCallback(async () => {
     if (!user) return;
+    await cleanupOwnStaleWaitingRooms(user.uid, activeRoomId);
     const rooms = await listOpenPublicRooms();
     setOpenRooms(rooms);
-  }, [user]);
+  }, [user, activeRoomId]);
 
   const startQuickMatchmaking = useCallback(
     async (opts: { mode: GameMode; maxPlayers: 2 | 4; entryStake: number }) => {
@@ -901,13 +1487,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to join real-time multiplayer tables.', 'info');
         return;
       }
-      const code = await findOrCreateQuickMatch(profile, opts);
-      setOfflineMatch(null);
-      setActiveRoomId(code);
-      setActiveTab('play');
-      showToast(`Connected to table ${code}.`, 'success');
+      const run = async () => {
+        const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+        const code = await findOrCreateQuickMatch(effectiveProfile, opts);
+        setOfflineMatch(null);
+        setActiveRoomId(code);
+        setActiveTab('play');
+        showToast(`Connected to table ${code}.`, 'success');
+      };
+      if (guardSingleActiveMatch(`Start ${opts.maxPlayers}P Online Match`, run)) {
+        return;
+      }
+      await run();
     },
-    [user, profile, showToast]
+    [user, profile, showToast, guardSingleActiveMatch]
   );
 
   const createPrivateRoom = useCallback(
@@ -916,13 +1509,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to host a private table for friends.', 'info');
         return;
       }
-      const code = await createMultiplayerRoom(profile, { ...opts, visibility: 'private' });
-      setOfflineMatch(null);
-      setActiveRoomId(code);
-      setActiveTab('play');
-      showToast(`Private table ${code} created. Share the code with friends!`, 'success');
+      const run = async () => {
+        const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+        const code = await createMultiplayerRoom(effectiveProfile, { ...opts, visibility: 'private' });
+        setOfflineMatch(null);
+        setActiveRoomId(code);
+        setActiveTab('play');
+        showToast(`Private table ${code} created. Share the code with friends!`, 'success');
+      };
+      if (guardSingleActiveMatch('Create Private Room', run)) {
+        return;
+      }
+      await run();
     },
-    [user, profile, showToast]
+    [user, profile, showToast, guardSingleActiveMatch]
   );
 
   const joinRoom = useCallback(
@@ -931,17 +1531,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to join a friend’s table.', 'info');
         return;
       }
-      try {
-        const room = await joinRoomByCode(code, profile);
-        setOfflineMatch(null);
-        setActiveRoomId(room.id);
-        setActiveTab('play');
-        showToast(`Joined table ${room.roomCode}!`, 'success');
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Unable to join table.', 'error');
+      const run = async () => {
+        try {
+          const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+          const room = await joinRoomByCode(code, effectiveProfile);
+          setOfflineMatch(null);
+          setActiveRoomId(room.id);
+          setActiveTab('play');
+          showToast(`Joined table ${room.roomCode}!`, 'success');
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Unable to join table.', 'error');
+        }
+      };
+      if (guardSingleActiveMatch(`Join Table ${code.trim().toUpperCase()}`, run, code)) {
+        return;
       }
+      await run();
     },
-    [user, profile, showToast]
+    [user, profile, showToast, guardSingleActiveMatch]
   );
 
   const clearPendingDeepLinkRoom = useCallback(() => {
@@ -978,6 +1585,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     joinRoom(codeToJoin).catch(() => {});
   }, [authReady, user, profile.uid, pendingDeepLinkRoomCode, clearPendingDeepLinkRoom, joinRoom, showToast]);
 
+  const rejoinActiveRoom = useCallback(
+    async (roomId: string) => {
+      if (!user) {
+        showToast('Sign in with Google to rejoin your live table.', 'info');
+        return;
+      }
+      setOfflineMatch(null);
+      setActiveRoomId(roomId);
+      setActiveTab('play');
+      notifiedActiveRoomIdsRef.current.add(roomId);
+      const target = myActiveRooms.find((r) => r.id === roomId);
+      const mySeatInTarget = target?.seats.find((s) => !s.isBot && s.uid === user.uid);
+      const alreadyFinished = Boolean(target && mySeatInTarget && isSeatFinished(mySeatInTarget, target.tokens));
+      if (!target || target.status === 'playing') {
+        await updateRoomSeatPresence(
+          roomId,
+          user.uid,
+          { autoPlay: false, away: false, lastSeenMs: Date.now() },
+          alreadyFinished ? undefined : `${profile.displayName} rejoined the table!`
+        ).catch(() => {});
+      }
+      showToast(
+        alreadyFinished
+          ? `Rejoined table ${roomId} — spectating the live finish!`
+          : `Rejoined table ${roomId} — you're back in control!`,
+        'success'
+      );
+    },
+    [user, myActiveRooms, profile.displayName, showToast]
+  );
+
+  const setMySeatAutoPlay = useCallback(
+    async (enabled: boolean) => {
+      if (!activeRoom || !user || activeRoom.status !== 'playing') return;
+      await updateRoomSeatPresence(
+        activeRoom.id,
+        user.uid,
+        { autoPlay: enabled, away: enabled, lastSeenMs: Date.now() },
+        enabled
+          ? `${profile.displayName} enabled Auto-Play.`
+          : `${profile.displayName} took back manual control!`
+      );
+      showToast(
+        enabled ? 'Auto-Play enabled for your turns.' : "You're back in manual control!",
+        enabled ? 'info' : 'success'
+      );
+    },
+    [activeRoom, user, profile.displayName, showToast]
+  );
+
   const hostStartRoom = useCallback(
     async (fillBots: boolean) => {
       if (!activeRoom || !user) return;
@@ -988,6 +1645,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const submitMultiplayerTurn = useCallback(
     async (payload: {
+      seats?: RoomSeat[];
       tokens: TokenPositions;
       turnIndex: number;
       diceValue: number;
@@ -1021,14 +1679,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const exitActiveRoom = useCallback(async () => {
-    if (activeRoom && user && activeRoom.status === 'waiting') {
-      await leaveWaitingRoom(activeRoom, user.uid, profile.displayName).catch(() => {});
+    const roomToExit = activeRoom;
+    if (roomToExit && user) {
+      if (roomToExit.status === 'waiting') {
+        await leaveWaitingRoom(roomToExit, user.uid, profile.displayName).catch(() => {});
+      } else if (roomToExit.status === 'playing') {
+        notifiedActiveRoomIdsRef.current.add(roomToExit.id);
+        const mySeatInExit = roomToExit.seats.find((s) => !s.isBot && s.uid === user.uid);
+        const alreadyFinished = Boolean(mySeatInExit && isSeatFinished(mySeatInExit, roomToExit.tokens));
+        if (!alreadyFinished) {
+          await updateRoomSeatPresence(
+            roomToExit.id,
+            user.uid,
+            { away: true, autoPlay: true },
+            `${profile.displayName} stepped out — Auto-Play active.`
+          ).catch(() => {});
+          showToast(
+            `Auto-Play is covering your turns in ${roomToExit.roomCode}. Tap Rejoin anytime!`,
+            'info'
+          );
+        }
+      }
     }
     setActiveRoomId(null);
     setActiveRoom(null);
     setRoomMessages([]);
     setActiveTab('lobby');
-  }, [activeRoom, user, profile.displayName]);
+  }, [activeRoom, user, profile.displayName, showToast]);
 
   const rematchOnlineRoom = useCallback(
     async (finishedRoom: RoomDoc) => {
@@ -1037,8 +1714,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
+        const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
         if (finishedRoom.visibility === 'public') {
-          const code = await findOrCreateQuickMatch(profile, {
+          const code = await findOrCreateQuickMatch(effectiveProfile, {
             mode: finishedRoom.mode,
             maxPlayers: finishedRoom.maxPlayers,
             entryStake: finishedRoom.entryStake,
@@ -1050,7 +1728,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const code = await createMultiplayerRoom(profile, {
+        const code = await createMultiplayerRoom(effectiveProfile, {
           visibility: 'private',
           mode: finishedRoom.mode,
           maxPlayers: finishedRoom.maxPlayers,
@@ -1059,23 +1737,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const freshRoom: RoomDoc = {
           id: code,
           roomCode: code,
-          hostUid: profile.uid,
+          hostUid: effectiveProfile.uid,
           visibility: 'private',
           mode: finishedRoom.mode,
           maxPlayers: finishedRoom.maxPlayers,
           entryStake: finishedRoom.entryStake,
           status: 'waiting',
           openPublic: false,
-          playerUids: [profile.uid],
+          playerUids: [effectiveProfile.uid],
           seats: [
             {
-              uid: profile.uid,
-              name: profile.displayName,
-              avatarId: profile.avatarId,
-              avatarFrame: profile.avatarFrame,
+              uid: effectiveProfile.uid,
+              name: effectiveProfile.displayName,
+              avatarId: effectiveProfile.avatarId,
+              avatarFrame: effectiveProfile.avatarFrame,
               color: 'red',
               isBot: false,
-              elo: profile.elo,
+              elo: effectiveProfile.elo,
             },
           ],
           tokens: {
@@ -1099,11 +1777,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setActiveTab('play');
 
         const otherHumans = finishedRoom.seats.filter(
-          (s) => !s.isBot && s.uid !== profile.uid
+          (s) => !s.isBot && s.uid !== effectiveProfile.uid
         );
         if (otherHumans.length > 0) {
           await Promise.allSettled(
-            otherHumans.map((seat) => sendRoomInviteDoc(freshRoom, profile, seat.uid))
+            otherHumans.map((seat) => sendRoomInviteDoc(freshRoom, effectiveProfile, seat.uid))
           );
           showToast(
             `Rematch table ${code} open! Invited ${otherHumans.length} friend${otherHumans.length > 1 ? 's' : ''}.`,
@@ -1119,12 +1797,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [user, profile, showToast]
   );
 
-  const launchOfflinePractice = useCallback((config: OfflineMatchConfig) => {
-    setActiveRoomId(null);
-    setActiveRoom(null);
-    setOfflineMatch(config);
-    setActiveTab('play');
-  }, []);
+  const launchOfflinePractice = useCallback(
+    (config: OfflineMatchConfig) => {
+      const run = () => {
+        setActiveRoomId(null);
+        setActiveRoom(null);
+        setOfflineMatch(config);
+        setActiveTab('play');
+      };
+      const label = config.passAndPlay
+        ? 'Start Pass & Play'
+        : config.tournamentContext
+          ? 'Start Cup Match'
+          : 'Start VS Computer';
+      if (guardSingleActiveMatch(label, run)) {
+        return;
+      }
+      run();
+    },
+    [guardSingleActiveMatch]
+  );
 
   const closeOfflineMatch = useCallback(() => {
     setOfflineMatch(null);
@@ -1153,7 +1845,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to organize competitive tournaments.', 'info');
         return;
       }
-      const created = await createTournament(profile, title, tier, maxEntrants);
+      const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+      const created = await createTournament(effectiveProfile, title, tier, maxEntrants);
       setTournaments((prev) => [created, ...prev]);
       showToast(`Tournament "${created.title}" is now open for registration.`, 'success');
     },
@@ -1178,7 +1871,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      const updated = await joinTournamentDoc(tournament, profile);
+      const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+      const updated = await joinTournamentDoc(tournament, effectiveProfile);
       const nextWallet: UserWallet = {
         ...wallet,
         coins: useFreeTicket ? wallet.coins : wallet.coins - tournament.entryFee,
@@ -1205,14 +1899,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // =========================================================================
 
   const sendFriendRequest = useCallback(
-    async (target: PlayerProfile) => {
+    async (target: Pick<PlayerProfile, 'uid' | 'displayName' | 'avatarId'>) => {
       if (!user) {
         showToast('Sign in with Google to add friends and send invites.', 'info');
         return;
       }
       try {
-        await sendFriendRequestDoc(profile, target);
-        showToast(`Friend request sent to ${target.displayName}!`, 'success');
+        const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+        const outcome = await sendFriendRequestDoc(effectiveProfile, target);
+        if (outcome === 'accepted') {
+          tabletopAudio.playSafeStar();
+          showToast(`${target.displayName} joined your squad!`, 'success');
+        } else {
+          showToast(`Friend request sent to ${target.displayName}!`, 'success');
+        }
       } catch (err) {
         showToast(err instanceof Error ? err.message : 'Unable to send friend request.', 'error');
       }
@@ -1245,59 +1945,68 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to invite friends to a table.', 'info');
         return;
       }
-      try {
-        let targetRoom = activeRoom && activeRoom.status === 'waiting' ? activeRoom : null;
-        if (!targetRoom) {
-          const code = await createMultiplayerRoom(profile, {
-            visibility: 'private',
-            mode: 'quick',
-            maxPlayers: 4,
-            entryStake: 100,
-          });
-          setOfflineMatch(null);
-          setActiveRoomId(code);
-          setActiveTab('play');
-          targetRoom = {
-            id: code,
-            roomCode: code,
-            hostUid: profile.uid,
-            visibility: 'private',
-            mode: 'quick',
-            maxPlayers: 4,
-            entryStake: 100,
-            status: 'waiting',
-            openPublic: false,
-            playerUids: [profile.uid],
-            seats: [
-              {
-                uid: profile.uid,
-                name: profile.displayName,
-                avatarId: profile.avatarId,
-                avatarFrame: profile.avatarFrame,
-                color: 'red',
-                isBot: false,
-                elo: profile.elo,
-              },
-            ],
-            tokens: { red: [-1, -1, -1, -1], green: [-1, -1, -1, -1], yellow: [-1, -1, -1, -1], blue: [-1, -1, -1, -1] },
-            turnIndex: 0,
-            diceValue: 0,
-            turnPhase: 'roll',
-            consecutiveSixes: 0,
-            winnerColor: '',
-            winnerUid: '',
-            lastActionText: '',
-            turnCount: 0,
-          };
+      const run = async () => {
+        try {
+          const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+          let targetRoom = activeRoom && activeRoom.status === 'waiting' ? activeRoom : null;
+          if (!targetRoom) {
+            const code = await createMultiplayerRoom(effectiveProfile, {
+              visibility: 'private',
+              mode: 'quick',
+              maxPlayers: 4,
+              entryStake: 100,
+            });
+            setOfflineMatch(null);
+            setActiveRoomId(code);
+            setActiveTab('play');
+            targetRoom = {
+              id: code,
+              roomCode: code,
+              hostUid: effectiveProfile.uid,
+              visibility: 'private',
+              mode: 'quick',
+              maxPlayers: 4,
+              entryStake: 100,
+              status: 'waiting',
+              openPublic: false,
+              playerUids: [effectiveProfile.uid],
+              seats: [
+                {
+                  uid: effectiveProfile.uid,
+                  name: effectiveProfile.displayName,
+                  avatarId: effectiveProfile.avatarId,
+                  avatarFrame: effectiveProfile.avatarFrame,
+                  color: 'red',
+                  isBot: false,
+                  elo: effectiveProfile.elo,
+                },
+              ],
+              tokens: { red: [-1, -1, -1, -1], green: [-1, -1, -1, -1], yellow: [-1, -1, -1, -1], blue: [-1, -1, -1, -1] },
+              turnIndex: 0,
+              diceValue: 0,
+              turnPhase: 'roll',
+              consecutiveSixes: 0,
+              winnerColor: '',
+              winnerUid: '',
+              lastActionText: '',
+              turnCount: 0,
+            };
+          }
+          await sendRoomInviteDoc(targetRoom, effectiveProfile, friendUid);
+          tabletopAudio.playTokenMove();
+          showToast(`Table invite (${targetRoom.roomCode}) sent to ${friendName}!`, 'success');
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Could not send table invite.', 'error');
         }
-        await sendRoomInviteDoc(targetRoom, profile, friendUid);
-        tabletopAudio.playTokenMove();
-        showToast(`Table invite (${targetRoom.roomCode}) sent to ${friendName}!`, 'success');
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Could not send table invite.', 'error');
+      };
+
+      const hasOpenWaitingRoom = Boolean(activeRoom && activeRoom.status === 'waiting');
+      if (!hasOpenWaitingRoom && guardSingleActiveMatch(`Invite ${friendName} to New Table`, run)) {
+        return;
       }
+      await run();
     },
-    [user, activeRoom, profile, showToast]
+    [user, activeRoom, profile, showToast, guardSingleActiveMatch]
   );
 
   const acceptRoomInvite = useCallback(
@@ -1306,19 +2015,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to accept table invites.', 'info');
         return;
       }
-      try {
-        await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
-        const room = await joinRoomByCode(invite.roomCode, profile);
-        setOfflineMatch(null);
-        setActiveRoomId(room.id);
-        setActiveTab('play');
-        tabletopAudio.playSafeStar();
-        showToast(`Joined ${invite.fromName}'s table (${room.roomCode})!`, 'success');
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'This table is no longer open.', 'error');
+      const run = async () => {
+        try {
+          const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+          await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
+          const room = await joinRoomByCode(invite.roomCode, effectiveProfile);
+          setOfflineMatch(null);
+          setActiveRoomId(room.id);
+          setActiveTab('play');
+          tabletopAudio.playSafeStar();
+          showToast(`Joined ${invite.fromName}'s table (${room.roomCode})!`, 'success');
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'This table is no longer open.', 'error');
+        }
+      };
+      if (guardSingleActiveMatch(`Join ${invite.fromName}'s Table`, run, invite.roomCode)) {
+        return;
       }
+      await run();
     },
-    [user, profile, showToast]
+    [user, profile, showToast, guardSingleActiveMatch]
   );
 
   const declineRoomInvite = useCallback(
@@ -1560,17 +2276,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       grantWheelReward,
       recordGameplayEvent,
       recordMatchCompletion,
+      networkOnline,
+      reconnecting,
+      activeRoomId,
       activeRoom,
+      myActiveRooms,
+      blockingActiveRoom,
+      activeMatchConflict,
+      dismissActiveMatchConflict,
+      confirmExitAndStartNewMatch,
       roomMessages,
       openRooms,
       refreshOpenRooms,
       startQuickMatchmaking,
       createPrivateRoom,
       joinRoom,
+      rejoinActiveRoom,
+      setMySeatAutoPlay,
       hostStartRoom,
       submitMultiplayerTurn,
       sendChat,
       exitActiveRoom,
+      forfeitActiveRoom,
       rematchOnlineRoom,
       pendingDeepLinkRoomCode,
       clearPendingDeepLinkRoom,
@@ -1623,17 +2350,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       grantWheelReward,
       recordGameplayEvent,
       recordMatchCompletion,
+      networkOnline,
+      reconnecting,
+      activeRoomId,
       activeRoom,
+      myActiveRooms,
+      blockingActiveRoom,
+      activeMatchConflict,
+      dismissActiveMatchConflict,
+      confirmExitAndStartNewMatch,
       roomMessages,
       openRooms,
       refreshOpenRooms,
       startQuickMatchmaking,
       createPrivateRoom,
       joinRoom,
+      rejoinActiveRoom,
+      setMySeatAutoPlay,
       hostStartRoom,
       submitMultiplayerTurn,
       sendChat,
       exitActiveRoom,
+      forfeitActiveRoom,
       rematchOnlineRoom,
       pendingDeepLinkRoomCode,
       clearPendingDeepLinkRoom,

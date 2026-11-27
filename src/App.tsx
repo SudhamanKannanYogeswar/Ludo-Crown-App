@@ -1,15 +1,19 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  AlertTriangle,
   BarChart3,
   Coins,
   Gem,
   Gift,
   Home,
   LogOut,
+  Play,
   Trophy,
   Users,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import { AdaptiveBannerAd, AdMobModalHost, AdPolicyModal } from './components/AdMobOverlays';
 import { AnimatedGameBackdrop } from './components/AnimatedGameBackdrop';
@@ -46,6 +50,11 @@ function LudoCrownShell() {
     toggleSoundMuted,
     backdropThemeId,
     activeRoom,
+    myActiveRooms,
+    activeMatchConflict,
+    dismissActiveMatchConflict,
+    confirmExitAndStartNewMatch,
+    rejoinActiveRoom,
     offlineMatch,
     signInWithGoogle,
     signOutUser,
@@ -56,9 +65,13 @@ function LudoCrownShell() {
 
   const [wheelOpen, setWheelOpen] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(false);
+  const [conflictBusy, setConflictBusy] = useState(false);
 
-  const hasActiveMatch = Boolean(activeRoom || offlineMatch);
   const isPlaying = activeTab === 'play';
+  const primaryRunningRoom = activeRoom || myActiveRooms[0] || null;
+  const showGlobalResumeStrip =
+    !isPlaying &&
+    (Boolean(offlineMatch) || (Boolean(primaryRunningRoom) && activeTab !== 'lobby'));
 
   const pendingFriendRequests = friendships.filter(
     (f) => f.status === 'pending' && f.recipientUid === profile.uid
@@ -191,20 +204,30 @@ function LudoCrownShell() {
         </header>
       )}
 
-      {hasActiveMatch && !isPlaying && (
+      {showGlobalResumeStrip && (
         <div className="relative shrink-0 z-20 bg-[#FEF9C3] border-b-2 border-[#111827] px-3 py-1.5">
           <div className="max-w-[1160px] mx-auto flex items-center justify-between gap-2 text-xs">
             <span className="font-bold text-[#111827] truncate">
-              {activeRoom
-                ? `Live table ${activeRoom.roomCode} is active.`
+              {primaryRunningRoom
+                ? `Live table ${primaryRunningRoom.roomCode} is ${
+                    primaryRunningRoom.status === 'playing'
+                      ? 'running (Auto-Play active).'
+                      : 'waiting for players.'
+                  }`
                 : 'Match paused on the board.'}
             </span>
             <button
               type="button"
-              onClick={() => setActiveTab('play')}
+              onClick={() => {
+                if (primaryRunningRoom && !activeRoom) {
+                  rejoinActiveRoom(primaryRunningRoom.id);
+                } else {
+                  setActiveTab('play');
+                }
+              }}
               className="px-3 py-1 rounded-lg font-display font-extrabold text-[11px] game-btn-blue whitespace-nowrap cursor-pointer"
             >
-              Resume
+              {primaryRunningRoom ? 'Rejoin' : 'Resume'}
             </button>
           </div>
         </div>
@@ -278,10 +301,98 @@ function LudoCrownShell() {
         </div>
       )}
 
-      <OfflineIndicator />
+      {!(isPlaying && activeRoom) && <OfflineIndicator />}
       <LuckySpinModal open={wheelOpen} onClose={() => setWheelOpen(false)} />
       <AdPolicyModal open={policyOpen} onClose={() => setPolicyOpen(false)} />
       <AdMobModalHost />
+
+      {activeMatchConflict &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[80] bg-[#0F172A]/60 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Active match already running"
+            onClick={(e) => {
+              if (e.target === e.currentTarget && !conflictBusy) {
+                dismissActiveMatchConflict();
+              }
+            }}
+          >
+            <div className="w-full max-w-sm rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 space-y-4 animate-pop-in">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-[#FEF3C7] border-2 border-[#111827] flex items-center justify-center text-[#D97706] shrink-0">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="font-display text-lg font-extrabold text-[#111827] leading-tight">
+                      Active Match Running
+                    </h2>
+                    <p className="text-[11px] font-mono font-bold text-[#1D4ED8]">
+                      Room {activeMatchConflict.room.roomCode} · {activeMatchConflict.room.maxPlayers}P{' '}
+                      {activeMatchConflict.room.mode === 'quick' ? 'Quick' : 'Classic'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={conflictBusy}
+                  onClick={dismissActiveMatchConflict}
+                  className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] cursor-pointer disabled:opacity-50"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="rounded-2xl bg-[#FEF9C3] border border-[#FACC15] p-3 text-xs text-[#713F12] leading-relaxed">
+                You can only play <strong>one match at a time</strong>. Rejoin your current table,
+                or permanently exit it to start a new game.{' '}
+                {activeMatchConflict.room.status === 'playing' && (
+                  <strong>Exiting forfeits all rewards from the current match.</strong>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={conflictBusy}
+                  onClick={async () => {
+                    const roomId = activeMatchConflict.room.id;
+                    dismissActiveMatchConflict();
+                    await rejoinActiveRoom(roomId);
+                  }}
+                  className="w-full py-2.5 px-4 rounded-2xl game-btn-blue btn-gloss-sheen font-display font-extrabold text-sm inline-flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Rejoin Table {activeMatchConflict.room.roomCode}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={conflictBusy}
+                  onClick={async () => {
+                    setConflictBusy(true);
+                    try {
+                      await confirmExitAndStartNewMatch();
+                    } finally {
+                      setConflictBusy(false);
+                    }
+                  }}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-[#FEE2E2] hover:bg-[#FECACA] text-[#B91C1C] border-2 border-[#111827] shadow-[0_3px_0_#111827] font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors disabled:opacity-60"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>
+                    {conflictBusy
+                      ? 'Exiting & Starting...'
+                      : `Exit Current Match & ${activeMatchConflict.actionLabel}`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
