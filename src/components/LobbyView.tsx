@@ -22,7 +22,6 @@ import {
   HERO_STUDIO_BOARD_IMAGE,
   MODE_DUEL1V1_IMAGE,
   MODE_PASSPLAY_IMAGE,
-  MODE_QUICK4P_IMAGE,
   MODE_VSBOT_IMAGE,
 } from '../data/catalog';
 import { AiDifficulty, GameMode } from '../types';
@@ -418,55 +417,25 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             </div>
           </section>
 
-          {/* MORE WAYS TO PLAY: 4 Vibrant Tactile Mode Cards (2x2 Grid) */}
+          {/* MORE WAYS TO PLAY: 3 Distinct Tactile Mode Cards (Single Balanced Row) */}
           <section className="space-y-2.5 sm:space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-base sm:text-lg font-extrabold text-[#111827]">
                 More ways to play
               </h2>
               <span className="px-2.5 py-0.5 rounded-full bg-white/90 border border-[#CBD5E1] text-[11px] font-display font-extrabold text-[#1D4ED8]">
-                4 modes
+                3 modes
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-              <button
-                type="button"
-                disabled={busyAction !== null}
-                onClick={() => handleQuickOnlineMode(4)}
-                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
-              >
-                <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#FF2E54] animate-badge-bob">
-                  <img
-                    src={MODE_QUICK4P_IMAGE}
-                    alt="Quick 4P"
-                    draggable={false}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover scale-[1.15] group-hover:scale-[1.24] transition-transform duration-200"
-                  />
-                  <div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
-                  />
-                </div>
-                <div className="mt-2.5">
-                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
-                    {busyAction === 'quick4' ? 'Matching...' : 'Quick 4P'}
-                  </div>
-                  <div className="text-[11px] font-bold text-[#BE123C] mt-0.5">Fast online</div>
-                </div>
-              </button>
-
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
               <button
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(2)}
-                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-center sm:text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col items-center sm:items-start justify-between min-h-[114px] sm:min-h-[126px]"
               >
-                <div
-                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob"
-                  style={{ animationDelay: '0.45s' }}
-                >
+                <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob">
                   <img
                     src={MODE_DUEL1V1_IMAGE}
                     alt="1v1 Duel"
@@ -479,22 +448,24 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-2.5">
-                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5 w-full">
+                  <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] leading-tight truncate">
                     {busyAction === 'duel2' ? 'Matching...' : '1v1 Duel'}
                   </div>
-                  <div className="text-[11px] font-bold text-[#047857] mt-0.5">Head to head</div>
+                  <div className="text-[10px] sm:text-[11px] font-bold text-[#047857] mt-0.5 truncate">
+                    Head to head
+                  </div>
                 </div>
               </button>
 
               <button
                 type="button"
                 onClick={handleOpenPassPlay}
-                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-center sm:text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col items-center sm:items-start justify-between min-h-[114px] sm:min-h-[126px]"
               >
                 <div
                   className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-gradient-to-b from-[#F59E0B] to-[#D97706] flex items-center justify-center animate-badge-bob"
-                  style={{ animationDelay: '0.7s' }}
+                  style={{ animationDelay: '0.45s' }}
                 >
                   <img
                     src={MODE_PASSPLAY_IMAGE}
@@ -508,11 +479,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-2.5">
-                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5 w-full">
+                  <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] leading-tight truncate">
                     Pass &amp; Play
                   </div>
-                  <div className="text-[11px] font-bold text-[#B45309] mt-0.5">Same phone · 2–4P</div>
+                  <div className="text-[10px] sm:text-[11px] font-bold text-[#B45309] mt-0.5 truncate">
+                    Same phone
+                  </div>
                 </div>
               </button>
 
@@ -525,7 +498,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     difficulty: aiDifficulty,
                   })
                 }
-                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-center sm:text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col items-center sm:items-start justify-between min-h-[114px] sm:min-h-[126px]"
               >
                 <div
                   className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#2563EB] animate-badge-bob"
@@ -543,11 +516,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-2.5">
-                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5 w-full">
+                  <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] leading-tight truncate">
                     VS Computer
                   </div>
-                  <div className="text-[11px] font-bold text-[#1D4ED8] mt-0.5">Play vs bots</div>
+                  <div className="text-[10px] sm:text-[11px] font-bold text-[#1D4ED8] mt-0.5 truncate">
+                    Play vs bots
+                  </div>
                 </div>
               </button>
             </div>
@@ -775,8 +750,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </p>
             ) : openRooms.length === 0 ? (
               <p className="text-xs text-[#64748B]">
-                No public waiting tables right now. Tap <strong>Quick 4P</strong> or{' '}
-                <strong>1v1 Duel</strong> to start one!
+                No public waiting tables right now. Tap <strong>1v1 Duel</strong> to match online or{' '}
+                <strong>Create room</strong> to host a table!
               </p>
             ) : (
               <div className="space-y-2 max-h-[168px] overflow-y-auto no-scrollbar">
