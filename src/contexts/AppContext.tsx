@@ -13,6 +13,8 @@ import {
   hasNativeAndroidAdBridge,
   initNativeAdMob,
   isTestAdUnitId,
+  preloadNativeInterstitialAd,
+  preloadNativeRewardedAd,
   REWARDED_PLACEMENTS,
   RewardedPlacementId,
   showNativeInterstitialAd,
@@ -489,9 +491,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [user, activeRoom?.id, activeRoom?.visibility]);
 
-  // Warm up native AdMob SDK & inspect notification permission once on mount
+  // Warm up native AdMob SDK, pre-warm rewarded & interstitial ads, & inspect notification permission once on mount
   useEffect(() => {
     initNativeAdMob();
+    preloadNativeRewardedAd();
+    preloadNativeInterstitialAd();
     getNotificationPermissionState()
       .then((perm) => setNotificationPermission(perm))
       .catch(() => {});
@@ -540,14 +544,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [notificationPrefs.enabled, notificationPrefs.dailyRewards, wallet.lastDailyClaimDate]);
 
-  // Policy-compliant Adaptive Banner visibility:
-  // Shown ONLY on non-gameplay screens (Home, Cups, Rank, Rewards, Shop, and Online Waiting Room).
-  // Strictly hidden whenever active Ludo board gameplay is on screen to prevent accidental clicks.
+  // Policy-compliant Adaptive Banner anchored at TOP_CENTER (margin 0) across EVERY screen:
+  // - Immediately visible above the header bar on Home, Menu tabs, Waiting Room, and Active Gameplay.
+  // - Never needs to destroy & reload when navigating between Home -> Waiting Room -> Match -> Home.
+  // - Maximizes above-the-fold viewability & impressions while keeping 100% separation from bottom tabs,
+  //   board tiles, and the bottom ROLL DICE controls (zero accidental clicks).
   useEffect(() => {
-    const inWaitingRoom = activeTab === 'play' && activeRoom?.status === 'waiting';
-    const shouldShowBanner = activeTab !== 'play' || inWaitingRoom;
-    const marginPx = inWaitingRoom ? 0 : undefined;
-    syncNativeBannerVisibility(shouldShowBanner, marginPx);
+    syncNativeBannerVisibility(true, { position: 'top', marginPx: 0 });
   }, [activeTab, activeRoom?.status]);
 
   const toggleSoundMuted = useCallback(() => {

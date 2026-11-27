@@ -70,6 +70,16 @@ function LudoCrownShell() {
       <AnimatedGameBackdrop backdropThemeId={backdropThemeId} />
 
       {!isPlaying && (
+        <div className="shrink-0 z-30">
+          <AdaptiveBannerAd
+            position="top"
+            onInspectPolicy={() => setPolicyOpen(true)}
+            onOpenRewards={() => setActiveTab('rewards')}
+          />
+        </div>
+      )}
+
+      {!isPlaying && (
         <header className="shrink-0 z-30 bg-white/95 backdrop-blur-md border-b-2 border-[#BAE6FD] shadow-[0_2px_10px_rgba(37,99,235,0.08)]">
           <div className="max-w-[1160px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2 sm:gap-4">
             <button
@@ -214,15 +224,6 @@ function LudoCrownShell() {
         {activeTab === 'rewards' && <RewardsView />}
         {activeTab === 'atelier' && <AtelierView />}
       </main>
-
-      {!isPlaying && (
-        <div className="shrink-0 z-20">
-          <AdaptiveBannerAd
-            onInspectPolicy={() => setPolicyOpen(true)}
-            onOpenRewards={() => setActiveTab('rewards')}
-          />
-        </div>
-      )}
 
       {!isPlaying && (
         <nav

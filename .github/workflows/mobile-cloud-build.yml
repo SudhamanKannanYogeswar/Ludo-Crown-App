@@ -150,7 +150,7 @@ jobs:
             echo "| Play Store Target SDK | Ready (API 35) | \`targetSdkVersion = 35\` (Android 15), \`versionCode = ${{ steps.android_config.outputs.version_code }}\`, \`versionName = ${{ steps.android_config.outputs.version_name }}\` |"
             echo "| App Launcher Icon | Ready | Ludo Crown icon installed across Android mipmap densities |"
             if [ "${{ steps.android_config.outputs.has_live_admob }}" = "true" ]; then
-              echo "| Google AdMob Ads | Live | Live App ID + Live Banner + Live Rewarded Video wired (test interstitial auto-disabled) |"
+              echo "| Google AdMob Ads | Live | Live App ID + Live Top Adaptive Banner + Live Rewarded Video + Live Post-Match Interstitial wired |"
             else
               echo "| Google AdMob Ads | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret before Play Store release |"
             fi

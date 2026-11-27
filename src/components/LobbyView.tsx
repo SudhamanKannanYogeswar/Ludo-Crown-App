@@ -185,7 +185,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
   };
 
   return (
-    <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-4 pb-8">
+    <div className="max-w-[1040px] mx-auto px-3.5 sm:px-6 py-3 sm:py-4 pb-6">
       {/* Pending WhatsApp / Deep-Link Invite Banner for Guests */}
       {!isSignedIn && pendingDeepLinkRoomCode && (
         <div className="mb-4 rounded-3xl bg-gradient-to-r from-[#DBEAFE] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3 animate-pop-in">
@@ -260,13 +260,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
       )}
 
       {/* Main Responsive Layout: Single crisp column on mobile, clean 12-col split on desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-start">
         {/* LEFT / PRIMARY COLUMN (7 cols on desktop): Hero Card + More Ways to Play */}
-        <div className="lg:col-span-7 space-y-5">
+        <div className="lg:col-span-7 space-y-3.5 sm:space-y-5">
           {/* TOP HERO CARD: Vivid Animated AAA Game Showcase + Play with friends */}
-          <section className="studio-card rounded-3xl p-4 sm:p-5 space-y-4">
+          <section className="studio-card rounded-3xl p-3.5 sm:p-5 space-y-3 sm:space-y-4">
             {/* Illustrated Board Showcase (~Top 1/3rd on Mobile) with Animated Graphic Overlays */}
-            <div className="relative rounded-2xl overflow-hidden border-2 border-[#111827] bg-gradient-to-br from-[#38BDF8] via-[#60A5FA] to-[#FACC15] h-[24dvh] min-h-[168px] max-h-[240px] shadow-[inset_0_2px_0_rgba(255,255,255,0.6)]">
+            <div className="relative rounded-2xl overflow-hidden border-2 border-[#111827] bg-gradient-to-br from-[#38BDF8] via-[#60A5FA] to-[#FACC15] h-[19dvh] min-h-[136px] max-h-[212px] shadow-[inset_0_2px_0_rgba(255,255,255,0.6)]">
               <img
                 src={HERO_STUDIO_BOARD_IMAGE}
                 alt="Ludo Crown Festive Arcade Tabletop Board"
@@ -419,9 +419,9 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
           </section>
 
           {/* MORE WAYS TO PLAY: 4 Vibrant Tactile Mode Cards (2x2 Grid) */}
-          <section className="space-y-3">
+          <section className="space-y-2.5 sm:space-y-3">
             <div className="flex items-center justify-between">
-              <h2 className="font-display text-lg font-extrabold text-[#111827]">
+              <h2 className="font-display text-base sm:text-lg font-extrabold text-[#111827]">
                 More ways to play
               </h2>
               <span className="px-2.5 py-0.5 rounded-full bg-white/90 border border-[#CBD5E1] text-[11px] font-display font-extrabold text-[#1D4ED8]">
@@ -429,12 +429,12 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
               <button
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(4)}
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
               >
                 <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#FF2E54] animate-badge-bob">
                   <img
@@ -461,7 +461,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(2)}
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
               >
                 <div
                   className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob"
@@ -490,7 +490,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               <button
                 type="button"
                 onClick={handleOpenPassPlay}
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
               >
                 <div
                   className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-gradient-to-b from-[#F59E0B] to-[#D97706] flex items-center justify-center animate-badge-bob"
@@ -525,7 +525,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     difficulty: aiDifficulty,
                   })
                 }
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[126px]"
+                className="group relative overflow-hidden rounded-3xl p-3 sm:p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[112px] sm:min-h-[126px]"
               >
                 <div
                   className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#2563EB] animate-badge-bob"

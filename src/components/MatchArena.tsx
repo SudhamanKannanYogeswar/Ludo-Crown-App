@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   Clock,
+  Coins,
   Copy,
   Crown,
   Dices,
@@ -38,6 +39,7 @@ import {
   getMovableTokenIndices,
 } from '../game/ludoEngine';
 import { tabletopAudio } from '../game/sound';
+import { hasCapacitorAdMobPlugin } from '../services/adMobService';
 import {
   buildPostMatchShareText,
   buildRoomInviteShareText,
@@ -925,15 +927,19 @@ export function MatchArena() {
   };
 
   const handleLeaveMatch = async () => {
+    const wasFinishedMatch = Boolean(matchSummary);
     if (isOnline) {
       await exitActiveRoom();
     } else {
       closeOfflineMatch();
     }
-    maybeShowInterstitialAfterMatch();
+    if (wasFinishedMatch) {
+      maybeShowInterstitialAfterMatch();
+    }
   };
 
   const handlePracticeRestart = () => {
+    const wasFinishedMatch = Boolean(matchSummary);
     setLocalGame(buildInitialOfflineState());
     setMatchSummary(null);
     setRerollUsedThisMatch(false);
@@ -952,15 +958,22 @@ export function MatchArena() {
       isPassAndPlay ? `${firstPlayerName} goes first — Roll the Dice!` : 'Your Turn — Roll the Dice!',
       1450
     );
+    if (wasFinishedMatch) {
+      maybeShowInterstitialAfterMatch();
+    }
   };
 
   const handleOnlineRematch = async () => {
     if (!activeRoom || rematchLoading) return;
+    const wasFinishedMatch = Boolean(matchSummary);
     setRematchLoading(true);
     try {
       setMatchSummary(null);
       summaryRecordedRef.current = false;
       await rematchOnlineRoom(activeRoom);
+      if (wasFinishedMatch) {
+        maybeShowInterstitialAfterMatch();
+      }
     } finally {
       setRematchLoading(false);
     }
@@ -1159,12 +1172,15 @@ export function MatchArena() {
 
     return (
       <div className="h-full w-full flex flex-col overflow-hidden">
-        {/* Crisp Studio-Bright Waiting Room Header */}
-        <div className="shrink-0 h-12 px-3 sm:px-6 bg-white/95 border-b-2 border-[#E2E8F0] flex items-center justify-between gap-3">
+        {/* Top Adaptive Banner Safe Zone — immediately visible above header while friends join */}
+        <AdaptiveBannerAd position="top" />
+
+        {/* Compact Studio-Bright Waiting Room Header */}
+        <div className="shrink-0 h-11 px-3 sm:px-6 bg-white/95 border-b-2 border-[#E2E8F0] flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={handleLeaveMatch}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border-2 border-[#111827] text-xs font-display font-extrabold text-[#111827] hover:bg-[#F1F5F9] cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white border-2 border-[#111827] text-xs font-display font-extrabold text-[#111827] hover:bg-[#F1F5F9] cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             Leave
@@ -1176,39 +1192,45 @@ export function MatchArena() {
           <button
             type="button"
             onClick={toggleSoundMuted}
-            className="p-2 rounded-xl bg-white border-2 border-[#CBD5E1] hover:border-[#111827] text-[#111827] cursor-pointer"
+            className="p-1.5 rounded-xl bg-white border-2 border-[#CBD5E1] hover:border-[#111827] text-[#111827] cursor-pointer"
             aria-label={soundMuted ? 'Unmute' : 'Mute'}
           >
-            {soundMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {soundMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
           </button>
         </div>
 
-        {/* Main Scrollable Waiting Room Content (Matches Reference Image 1 Right) */}
-        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar max-w-[980px] w-full mx-auto px-4 sm:px-6 py-4 pb-6">
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-            {/* Left / Primary Column: Room Code Card + 2x2 Table Seats + Board Edition + Start Match */}
-            <div className="lg:col-span-3 space-y-5">
-              {/* Top Room Code Card with One-Tap WhatsApp & Native Share */}
-              <div className="studio-card rounded-3xl p-4 sm:p-5 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-semibold text-[#64748B]">Room code</div>
-                    <div className="font-mono text-2xl sm:text-3xl font-black tracking-[0.12em] text-[#111827] mt-0.5">
+        {/* Main Scrollable Waiting Room Content — Above-the-fold: Top Banner + Compact Code + Start CTA + 4 Seats */}
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar max-w-[980px] w-full mx-auto px-3.5 sm:px-6 py-3 pb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-5 items-start">
+            {/* Left / Primary Column */}
+            <div className="lg:col-span-3 space-y-3">
+              {/* Compact Room Code + One-Tap WhatsApp & Native Share Bar */}
+              <div className="studio-card rounded-2xl p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-[#64748B] shrink-0">
+                      Code
+                    </span>
+                    <span className="font-mono text-xl sm:text-2xl font-black tracking-[0.12em] text-[#111827] leading-none">
                       {activeRoom.roomCode}
-                    </div>
+                    </span>
+                    <span className="hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#F1F5F9] border border-[#CBD5E1] text-[10px] font-bold text-[#334155] capitalize shrink-0">
+                      <Users className="w-2.5 h-2.5 text-[#1D4ED8]" />
+                      {activeRoom.maxPlayers}P · {activeRoom.mode}
+                    </span>
                   </div>
                   <button
                     type="button"
                     onClick={handleCopyCode}
-                    className="px-4 py-2.5 rounded-2xl game-btn-gold font-display font-extrabold text-xs inline-flex items-center gap-1.5 cursor-pointer shrink-0"
+                    className="px-3 py-1.5 rounded-xl game-btn-gold font-display font-extrabold text-xs inline-flex items-center gap-1 cursor-pointer shrink-0"
                   >
-                    {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedCode ? 'Copied' : 'Copy'}</span>
                   </button>
                 </div>
 
                 {/* One-Tap WhatsApp + Native Share Buttons */}
-                <div className="grid grid-cols-2 gap-2.5 pt-0.5">
+                <div className="grid grid-cols-2 gap-2">
                   <a
                     href={buildWhatsAppShareUrl(
                       buildRoomInviteShareText({
@@ -1220,7 +1242,7 @@ export function MatchArena() {
                     )}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="py-2.5 px-3 rounded-2xl game-btn-green font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    className="py-2 px-3 rounded-xl game-btn-green font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer text-center"
                   >
                     <Send className="w-3.5 h-3.5 shrink-0" />
                     <span>WhatsApp Invite</span>
@@ -1228,37 +1250,116 @@ export function MatchArena() {
                   <button
                     type="button"
                     onClick={handleNativeShareRoom}
-                    className="py-2.5 px-3 rounded-2xl game-btn-blue font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="py-2 px-3 rounded-xl game-btn-blue font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Share2 className="w-3.5 h-3.5 shrink-0" />
                     <span>Share Code</span>
                   </button>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#F1F5F9] border border-[#CBD5E1] text-[11px] font-bold text-[#334155]">
-                    <Users className="w-3 h-3 text-[#1D4ED8]" />
-                    {activeRoom.maxPlayers} Players
-                  </span>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#F1F5F9] border border-[#CBD5E1] text-[11px] font-bold text-[#334155] capitalize">
-                    {activeRoom.mode} rules
-                  </span>
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#F1F5F9] border border-[#CBD5E1] text-[11px] font-bold text-[#334155] capitalize">
-                    {activeRoom.visibility}
-                  </span>
-                </div>
               </div>
 
-              {/* 2x2 Color-Tinted Table Seats Grid */}
-              <div className="space-y-2.5">
+              {/* Start Match Primary Action — Immediately Visible Above the Fold (No Scrolling!) */}
+              <div className="space-y-2">
+                {isHost ? (
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        autoFillFiredRef.current = true;
+                        hostStartRoom(activeRoom.seats.length < 2);
+                      }}
+                      className="flex-1 py-3 px-4 rounded-2xl font-display font-extrabold text-sm sm:text-base game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>
+                        {activeRoom.seats.length < 2
+                          ? 'Fill bots & start now'
+                          : 'Start match'}
+                      </span>
+                    </button>
+                    {activeRoom.seats.length >= 2 &&
+                      activeRoom.seats.length < activeRoom.maxPlayers && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            autoFillFiredRef.current = true;
+                            hostStartRoom(true);
+                          }}
+                          className="py-2.5 px-3.5 rounded-2xl font-display font-extrabold text-xs game-btn-white cursor-pointer whitespace-nowrap"
+                        >
+                          + Fill with bots
+                        </button>
+                      )}
+                  </div>
+                ) : (
+                  <div className="studio-card-soft rounded-2xl px-3.5 py-2.5 text-center text-xs text-[#475569]">
+                    Waiting for <strong className="text-[#111827]">{activeRoom.seats[0]?.name}</strong> to start the match...
+                  </div>
+                )}
+
+                {/* Auto-Fill Quick Match Countdown Banner (Public Rooms Only) */}
+                {activeRoom.visibility === 'public' && (
+                  <div className="rounded-2xl bg-gradient-to-r from-[#EFF8FF] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_3px_0_#111827] px-3 py-2.5 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-[#1D4ED8] text-white border-2 border-[#111827] flex items-center justify-center shrink-0">
+                          {autoFillPaused ? <Pause className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-display text-xs font-extrabold text-[#111827] truncate">
+                            {activeRoom.seats.length >= activeRoom.maxPlayers
+                              ? 'Table full! Starting match...'
+                              : isHost
+                                ? autoFillPaused
+                                  ? 'Auto-fill paused · Waiting for players'
+                                  : `Finding players · Smart bots join in ${autoFillSeconds}s`
+                                : 'Public Quick Match · Auto-starts soon'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isHost && activeRoom.seats.length < activeRoom.maxPlayers && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAutoFillPaused((p) => {
+                              const next = !p;
+                              if (!next && autoFillSeconds === 0) setAutoFillSeconds(10);
+                              return next;
+                            });
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-white border-2 border-[#111827] text-[11px] font-display font-extrabold text-[#111827] hover:bg-[#FEF9C3] cursor-pointer shrink-0 inline-flex items-center gap-1"
+                        >
+                          <Clock className="w-3 h-3 text-[#1D4ED8]" />
+                          {autoFillPaused ? 'Resume' : 'Wait'}
+                        </button>
+                      )}
+                    </div>
+
+                    {isHost && !autoFillPaused && activeRoom.seats.length < activeRoom.maxPlayers && (
+                      <div className="h-1.5 rounded-full bg-white border border-[#93C5FD] overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-[#2563EB] to-[#10B981] transition-all duration-700"
+                          style={{ width: `${Math.min(100, ((10 - autoFillSeconds) / 10) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Compact 2x2 Color-Tinted Table Seats Grid */}
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-display text-lg font-extrabold text-[#111827]">Table seats</h2>
+                  <h2 className="font-display text-sm sm:text-base font-extrabold text-[#111827]">
+                    Table seats
+                  </h2>
                   <span className="font-mono text-xs font-bold text-[#475569]">
                     {activeRoom.seats.length} / {activeRoom.maxPlayers} joined
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   {seatOrderColors.map((slotColor, idx) => {
                     const seat =
                       activeRoom.seats.find((s) => s.color === slotColor) ||
@@ -1272,25 +1373,25 @@ export function MatchArena() {
                           key={`open-${slotColor}-${idx}`}
                           type="button"
                           onClick={() => setInviteModalOpen(true)}
-                          className="group rounded-3xl border-2 border-dashed border-[#60A5FA] hover:border-[#111827] bg-white/95 hover:bg-[#EFF8FF] p-3.5 text-left transition-all cursor-pointer flex flex-col justify-between min-h-[116px] shadow-xs"
+                          className="group rounded-2xl border-2 border-dashed border-[#60A5FA] hover:border-[#111827] bg-white/95 hover:bg-[#EFF8FF] p-2.5 text-left transition-all cursor-pointer flex flex-col justify-between min-h-[84px] shadow-xs"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-display font-extrabold ${tint.pillBg} ${tint.pillText} border border-[#111827]/20`}
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-display font-extrabold ${tint.pillBg} ${tint.pillText} border border-[#111827]/20`}
                             >
                               {colorLabel}
                             </span>
-                            <span className="text-[11px] font-bold text-[#2563EB]">Open</span>
+                            <span className="text-[10px] font-bold text-[#2563EB]">Open</span>
                           </div>
-                          <div className="mt-3 flex items-center gap-2.5">
-                            <div className="w-10 h-10 rounded-full border-2 border-dashed border-[#38BDF8] bg-[#EFF8FF] flex items-center justify-center text-[#1D4ED8] shrink-0 group-hover:scale-105 transition-transform">
-                              <UserPlus className="w-4 h-4 animate-badge-bob" />
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full border-2 border-dashed border-[#38BDF8] bg-[#EFF8FF] flex items-center justify-center text-[#1D4ED8] shrink-0 group-hover:scale-105 transition-transform">
+                              <UserPlus className="w-3.5 h-3.5 animate-badge-bob" />
                             </div>
                             <div className="min-w-0">
-                              <div className="font-display text-sm font-extrabold text-[#111827]">
+                              <div className="font-display text-xs font-extrabold text-[#111827] leading-tight">
                                 Invite
                               </div>
-                              <div className="text-[11px] font-semibold text-[#64748B]">Tap to add</div>
+                              <div className="text-[10px] font-semibold text-[#64748B]">Tap to add</div>
                             </div>
                           </div>
                         </button>
@@ -1302,33 +1403,33 @@ export function MatchArena() {
                     return (
                       <div
                         key={seat.uid}
-                        className={`rounded-3xl ${tint.bg} border-2 border-[#111827] shadow-[0_3px_0_#111827] p-3.5 flex flex-col justify-between min-h-[116px]`}
+                        className={`rounded-2xl ${tint.bg} border-2 border-[#111827] shadow-[0_3px_0_#111827] p-2.5 flex flex-col justify-between min-h-[84px]`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span
-                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-display font-extrabold ${tint.pillBg} ${tint.pillText}`}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-display font-extrabold ${tint.pillBg} ${tint.pillText}`}
                           >
                             {colorLabel}
                           </span>
                           <span
-                            className={`inline-flex items-center gap-1 text-[11px] font-bold ${tint.readyText}`}
+                            className={`inline-flex items-center gap-0.5 text-[10px] font-bold ${tint.readyText}`}
                           >
                             <Check className="w-3 h-3" />
                             Ready
                           </span>
                         </div>
 
-                        <div className="mt-3 flex items-center gap-2.5 min-w-0">
+                        <div className="mt-2 flex items-center gap-2 min-w-0">
                           <div
-                            className={`w-10 h-10 rounded-full border-2 border-[#111827] ${tint.badgeBg} ${tint.badgeText} font-display font-black text-xs flex items-center justify-center shrink-0`}
+                            className={`w-8 h-8 rounded-full border-2 border-[#111827] ${tint.badgeBg} ${tint.badgeText} font-display font-black text-[11px] flex items-center justify-center shrink-0`}
                           >
                             {getInitialsLocal(seat.name)}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-display text-sm font-extrabold text-[#111827] truncate">
+                            <div className="font-display text-xs font-extrabold text-[#111827] truncate leading-tight">
                               {seat.name}
                             </div>
-                            <div className="text-[11px] font-semibold text-[#475569]">
+                            <div className="text-[10px] font-semibold text-[#475569]">
                               {isSeatHost ? 'Host' : isSeatMe ? 'You' : 'Friend'}
                             </div>
                           </div>
@@ -1339,18 +1440,46 @@ export function MatchArena() {
                 </div>
               </div>
 
+              {/* High-Visibility Opt-In Rewarded Boost while waiting for friends to join */}
+              <div className="rounded-2xl bg-gradient-to-r from-[#FFFCE0] via-[#FEF9C3] to-[#ECFDF5] border-2 border-[#111827] shadow-[0_3px_0_#111827] px-3 py-2.5 flex items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-b from-[#FFF066] to-[#F59E0B] border-2 border-[#111827] flex items-center justify-center text-[#111827] shrink-0">
+                    <Coins className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-display text-xs font-extrabold text-[#111827] truncate">
+                      Earn +250 Free Coins while waiting
+                    </div>
+                    <div className="text-[11px] font-semibold text-[#475569] truncate">
+                      Quick optional video · Instant coin boost
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    triggerRewardedAd('daily_bonus_coins', () => {
+                      showToast('+250 Waiting Room Bonus Coins credited!', 'success');
+                    })
+                  }
+                  className="px-3 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer shrink-0 whitespace-nowrap"
+                >
+                  Watch Ad
+                </button>
+              </div>
+
               {/* Board Edition & Arena Backdrop Quick Selectors */}
-              <div className="space-y-3">
-                <div className="space-y-2">
+              <div className="space-y-2.5 pt-0.5">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
-                    <h2 className="font-display text-base font-extrabold text-[#111827]">
+                    <h2 className="font-display text-sm font-extrabold text-[#111827]">
                       Board edition
                     </h2>
                     <span className="text-[11px] font-semibold text-[#64748B]">
-                      Changes board frame, track &amp; stars
+                      Frame, track &amp; stars
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-2 gap-2">
                     {availableBoardThemes.slice(0, 4).map((theme) => {
                       const selected = profile.boardTheme === theme.id;
                       return (
@@ -1366,7 +1495,7 @@ export function MatchArena() {
                               diceTheme: profile.diceTheme,
                             })
                           }
-                          className={`px-3 py-2.5 rounded-2xl flex items-center justify-between gap-2 text-left cursor-pointer transition-colors ${
+                          className={`px-2.5 py-2 rounded-xl flex items-center justify-between gap-2 text-left cursor-pointer transition-colors ${
                             selected
                               ? 'bg-white border-2 border-[#111827] shadow-[0_2px_0_#111827]'
                               : 'bg-white/85 border border-[#CBD5E1] hover:border-[#111827]'
@@ -1374,11 +1503,11 @@ export function MatchArena() {
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <span
-                              className="w-7 h-7 rounded-lg p-[2px] border border-[#111827]/40 shrink-0 flex items-center justify-center"
+                              className="w-6 h-6 rounded-lg p-[2px] border border-[#111827]/40 shrink-0 flex items-center justify-center"
                               style={{ background: theme.outerBezelGradient }}
                             >
                               <span
-                                className="w-full h-full rounded-[4px] border"
+                                className="w-full h-full rounded-[3px] border"
                                 style={{
                                   backgroundColor: theme.tileBg,
                                   borderColor: theme.frameBg,
@@ -1390,11 +1519,11 @@ export function MatchArena() {
                             </span>
                           </div>
                           <span
-                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                               selected ? 'border-[#1D4ED8]' : 'border-[#94A3B8]'
                             }`}
                           >
-                            {selected && <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />}
+                            {selected && <span className="w-1.5 h-1.5 rounded-full bg-[#1D4ED8]" />}
                           </span>
                         </button>
                       );
@@ -1403,7 +1532,7 @@ export function MatchArena() {
                 </div>
 
                 {/* Ambient Backdrop Variations (All 5 Free) */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="font-display text-sm font-extrabold text-[#111827]">
                       Table backdrop
@@ -1427,7 +1556,7 @@ export function MatchArena() {
                           }`}
                         >
                           <span
-                            className="w-5 h-5 rounded-full border border-[#111827]/30 shrink-0"
+                            className="w-4 h-4 rounded-full border border-[#111827]/30 shrink-0"
                             style={{
                               background: `linear-gradient(135deg, ${bg.swatchColors[0]} 0%, ${bg.swatchColors[1]} 52%, ${bg.swatchColors[2]} 100%)`,
                             }}
@@ -1440,101 +1569,6 @@ export function MatchArena() {
                     })}
                   </div>
                 </div>
-              </div>
-
-              {/* Auto-Fill Quick Match Countdown Banner (Public Rooms Only) */}
-              {activeRoom.visibility === 'public' && (
-                <div className="rounded-2xl bg-gradient-to-r from-[#EFF8FF] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_3px_0_#111827] p-3.5 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-[#1D4ED8] text-white border-2 border-[#111827] flex items-center justify-center shrink-0">
-                        {autoFillPaused ? <Pause className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] truncate">
-                          {activeRoom.seats.length >= activeRoom.maxPlayers
-                            ? 'Table full! Starting match...'
-                            : isHost
-                              ? autoFillPaused
-                                ? 'Auto-fill paused · Waiting for players'
-                                : `Finding players · Smart bots join in ${autoFillSeconds}s`
-                              : 'Public Quick Match · Auto-starts soon'}
-                        </div>
-                        <div className="text-[11px] font-semibold text-[#475569]">
-                          {isHost
-                            ? 'Open seats auto-fill after 10s so you never wait alone.'
-                            : 'Host will launch as soon as seats fill or timer finishes.'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {isHost && activeRoom.seats.length < activeRoom.maxPlayers && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAutoFillPaused((p) => {
-                            const next = !p;
-                            if (!next && autoFillSeconds === 0) setAutoFillSeconds(10);
-                            return next;
-                          });
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-white border-2 border-[#111827] text-[11px] font-display font-extrabold text-[#111827] hover:bg-[#FEF9C3] cursor-pointer shrink-0 inline-flex items-center gap-1"
-                      >
-                        <Clock className="w-3 h-3 text-[#1D4ED8]" />
-                        {autoFillPaused ? 'Resume' : 'Wait'}
-                      </button>
-                    )}
-                  </div>
-
-                  {isHost && !autoFillPaused && activeRoom.seats.length < activeRoom.maxPlayers && (
-                    <div className="h-2 rounded-full bg-white border border-[#93C5FD] overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#2563EB] to-[#10B981] transition-all duration-700"
-                        style={{ width: `${Math.min(100, ((10 - autoFillSeconds) / 10) * 100)}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Start Match Primary Action */}
-              <div className="pt-1 space-y-2.5">
-                {isHost ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        autoFillFiredRef.current = true;
-                        hostStartRoom(activeRoom.seats.length < 2);
-                      }}
-                      className="w-full py-3.5 px-5 rounded-2xl font-display font-extrabold text-base game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Play className="w-4 h-4 fill-current" />
-                      <span>
-                        {activeRoom.seats.length < 2
-                          ? 'Fill bots & start now'
-                          : 'Start match'}
-                      </span>
-                    </button>
-                    {activeRoom.seats.length >= 2 &&
-                      activeRoom.seats.length < activeRoom.maxPlayers && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            autoFillFiredRef.current = true;
-                            hostStartRoom(true);
-                          }}
-                          className="w-full py-2.5 px-4 rounded-2xl font-display font-extrabold text-xs game-btn-white cursor-pointer"
-                        >
-                          Fill remaining seats with bots &amp; start
-                        </button>
-                      )}
-                  </>
-                ) : (
-                  <div className="studio-card-soft rounded-2xl px-4 py-3 text-center text-xs text-[#475569]">
-                    Waiting for <strong className="text-[#111827]">{activeRoom.seats[0]?.name}</strong> to start the match...
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1690,10 +1724,6 @@ export function MatchArena() {
             </div>,
             document.body
           )}
-
-        <div className="shrink-0 z-20">
-          <AdaptiveBannerAd />
-        </div>
       </div>
     );
   }
@@ -1708,8 +1738,12 @@ export function MatchArena() {
     !rerollUsedThisMatch &&
     !shouldAutoPlayOnlyMove;
 
-  const mobileBoardSizeClass =
-    seats.length > 2
+  const hasNativeTopBanner = hasCapacitorAdMobPlugin();
+  const mobileBoardSizeClass = hasNativeTopBanner
+    ? seats.length > 2
+      ? 'w-[min(calc(100vw-16px),max(244px,calc(100dvh-328px)))]'
+      : 'w-[min(calc(100vw-16px),max(256px,calc(100dvh-272px)))]'
+    : seats.length > 2
       ? 'w-[min(calc(100vw-16px),max(272px,calc(100dvh-268px)))]'
       : 'w-[min(calc(100vw-16px),max(272px,calc(100dvh-212px)))]';
 
@@ -1729,6 +1763,9 @@ export function MatchArena() {
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
+      {/* Dedicated Top Adaptive Banner Safe Zone (isolated above Match Header Bar for zero accidental clicks) */}
+      <AdaptiveBannerAd position="top" />
+
       {/* Crisp Studio-Bright Top Gameplay Bar */}
       <header className="shrink-0 h-11 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b-2 border-[#E2E8F0] flex items-center justify-between gap-2 z-20">
         <button

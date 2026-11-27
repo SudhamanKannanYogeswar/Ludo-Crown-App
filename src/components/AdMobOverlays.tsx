@@ -3,9 +3,12 @@ import { CheckCircle2, Lock, Play, ShieldCheck, X } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
   AdConsentMode,
+  BannerPositionMode,
   getAdConsentMode,
+  getNativeBannerMetrics,
   hasCapacitorAdMobPlugin,
   setAdConsentMode,
+  subscribeNativeBannerMetrics,
   syncNativeBannerVisibility,
 } from '../services/adMobService';
 
@@ -126,18 +129,33 @@ export function AdMobModalHost() {
 
 /**
  * Policy-Compliant Adaptive Banner Safe Zone
- * - Never displays raw App IDs, Ad Unit IDs, or placeholder text when an ad is not loaded.
+ * - Never displays raw App IDs, Ad Unit IDs, or fake placeholder text when an ad is not loaded.
  * - On Web (where native AdMob does not run), renders nothing.
- * - Inside native Android/iOS APK, reserves a clean, blank 64px non-interactive safe zone
- *   so the native AdMob Adaptive Banner overlays cleanly without covering any buttons.
+ * - Inside native Android/iOS APK, reserves the exact non-interactive safe zone height reported by
+ *   AdMob (default 60px) so the native Adaptive Banner sits cleanly without covering buttons or board tiles.
  */
 export function AdaptiveBannerAd({
+  position = 'bottom',
   onInspectPolicy: _onInspectPolicy,
   onOpenRewards: _onOpenRewards,
 }: {
+  position?: BannerPositionMode;
   onInspectPolicy?: () => void;
   onOpenRewards?: () => void;
 }) {
+  const [bannerHeightPx, setBannerHeightPx] = useState<number>(
+    () => getNativeBannerMetrics().heightPx
+  );
+
+  useEffect(() => {
+    if (!hasCapacitorAdMobPlugin()) return;
+    return subscribeNativeBannerMetrics((metrics) => {
+      if (metrics.heightPx > 0) {
+        setBannerHeightPx(metrics.heightPx);
+      }
+    });
+  }, []);
+
   if (!hasCapacitorAdMobPlugin()) {
     return null;
   }
@@ -145,26 +163,29 @@ export function AdaptiveBannerAd({
   return (
     <aside
       aria-label="Banner Safe Area"
-      className="relative z-10 w-full h-[64px] pointer-events-none select-none"
+      style={{ height: `${bannerHeightPx}px` }}
+      className={`relative shrink-0 z-10 w-full pointer-events-none select-none bg-white/95 ${
+        position === 'top' ? 'border-b border-[#E2E8F0]' : 'border-t border-[#BAE6FD]'
+      }`}
     />
   );
 }
 
 const PRIVACY_HIGHLIGHTS = [
   {
-    title: 'Zero Gameplay Interruption',
+    title: 'Safe, Always-Clear Top Banner',
     detail:
-      'Banners only appear on menu screens and stay completely hidden while your Ludo match is active.',
+      'One adaptive banner sits inside a dedicated top safe zone above the header bar on every screen—maximizing visibility while never overlapping buttons, tabs, or board tiles.',
   },
   {
-    title: 'Opt-In Rewarded First',
+    title: 'Opt-In Rewarded Boosts',
     detail:
-      '2x match coins, extra Lucky Spins, Free Cup Tickets, and +300 Low Coin Rescue only play when you choose to watch.',
+      '2x match coins, Waiting Room +250 Coin boosts, extra Lucky Spins, Free Cup Tickets, and +300 Low Coin Rescue only play when you choose to watch.',
   },
   {
-    title: 'No Forced Popups by Default',
+    title: 'Respectful Post-Match Breaks',
     detail:
-      'Matches flow straight into instant Rematch without unexpected full-screen ad interruptions.',
+      'Occasional full-screen breaks only appear after completed matches (at most once every 2 matches with a 90s cooldown)—never interrupting active turns.',
   },
   {
     title: 'Privacy & Notification Control',
@@ -174,7 +195,6 @@ const PRIVACY_HIGHLIGHTS = [
 ];
 
 export function AdPolicyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { activeTab } = useApp();
   const [consentMode, setConsentModeState] = useState<AdConsentMode>(() => getAdConsentMode());
 
   if (!open) return null;
@@ -182,7 +202,7 @@ export function AdPolicyModal({ open, onClose }: { open: boolean; onClose: () =>
   const handleConsentChange = (next: AdConsentMode) => {
     setConsentModeState(next);
     setAdConsentMode(next);
-    syncNativeBannerVisibility(activeTab !== 'play');
+    syncNativeBannerVisibility(true, { position: 'top', marginPx: 0, forceReload: true });
   };
 
   return (
