@@ -157,19 +157,19 @@ const PRIVACY_HIGHLIGHTS = [
       'Banners only appear on menu screens and stay completely hidden while your Ludo match is active.',
   },
   {
-    title: 'Opt-In Rewarded Bonuses',
+    title: 'Opt-In Rewarded First',
     detail:
-      'Bonus coins, gems, tournament passes, extra spins, and match perks only run when you tap to opt in.',
+      '2x match coins, extra Lucky Spins, Free Cup Tickets, and +300 Low Coin Rescue only play when you choose to watch.',
   },
   {
-    title: 'Respectful Break Frequency',
+    title: 'No Forced Popups by Default',
     detail:
-      'Interstitial breaks are strictly capped between matches and never interrupt turns.',
+      'Matches flow straight into instant Rematch without unexpected full-screen ad interruptions.',
   },
   {
-    title: 'Privacy-First Default',
+    title: 'Privacy & Notification Control',
     detail:
-      'Non-Personalized Ads are enabled by default unless you choose Personalized Ads below.',
+      'Non-Personalized Ads are on by default, and Push Notifications require explicit opt-in with per-alert toggles in Rewards.',
   },
 ];
 

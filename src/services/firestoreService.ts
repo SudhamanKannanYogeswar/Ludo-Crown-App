@@ -254,7 +254,7 @@ export async function updateWalletRewardsAndChallenges(
   payload: Pick<
     UserWallet,
     'coins' | 'gems' | 'dailyStreak' | 'lastDailyClaimDate' | 'dailyChallengesDate' | 'challengeProgress' | 'claimedChallenges'
-  >
+  > & { unlockedCosmetics?: string[] }
 ) {
   const path = `userWallets/${uid}`;
   const cleanProgress: ChallengeProgressMap = {
@@ -263,17 +263,21 @@ export async function updateWalletRewardsAndChallenges(
     matchesPlayed: Math.max(0, Math.floor(payload.challengeProgress.matchesPlayed)),
     matchesWon: Math.max(0, Math.floor(payload.challengeProgress.matchesWon)),
   };
+  const updateBody: Record<string, unknown> = {
+    coins: Math.max(0, Math.min(10000000, Math.floor(payload.coins))),
+    gems: Math.max(0, Math.min(1000000, Math.floor(payload.gems))),
+    dailyStreak: Math.max(0, Math.min(365, Math.floor(payload.dailyStreak))),
+    lastDailyClaimDate: clampString(payload.lastDailyClaimDate, 16),
+    dailyChallengesDate: clampString(payload.dailyChallengesDate, 16),
+    challengeProgress: cleanProgress,
+    claimedChallenges: payload.claimedChallenges.slice(0, 10),
+    updatedAt: serverTimestamp(),
+  };
+  if (Array.isArray(payload.unlockedCosmetics)) {
+    updateBody.unlockedCosmetics = payload.unlockedCosmetics.slice(0, 50);
+  }
   try {
-    await updateDoc(doc(db, 'userWallets', uid), {
-      coins: Math.max(0, Math.min(10000000, Math.floor(payload.coins))),
-      gems: Math.max(0, Math.min(1000000, Math.floor(payload.gems))),
-      dailyStreak: Math.max(0, Math.min(365, Math.floor(payload.dailyStreak))),
-      lastDailyClaimDate: clampString(payload.lastDailyClaimDate, 16),
-      dailyChallengesDate: clampString(payload.dailyChallengesDate, 16),
-      challengeProgress: cleanProgress,
-      claimedChallenges: payload.claimedChallenges.slice(0, 10),
-      updatedAt: serverTimestamp(),
-    });
+    await updateDoc(doc(db, 'userWallets', uid), updateBody);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -965,4 +969,33 @@ export async function respondToRoomInviteDoc(
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
+
+export async function savePushSubscriptionDoc(
+  uid: string,
+  payload: {
+    token: string;
+    platform: 'android' | 'ios' | 'web';
+    enabled: boolean;
+    roomInvites: boolean;
+    friendRequests: boolean;
+    dailyRewards: boolean;
+  }
+): Promise<void> {
+  const path = `pushSubscriptions/${uid}`;
+  try {
+    await setDoc(doc(db, 'pushSubscriptions', uid), {
+      uid,
+      token: clampString(payload.token, 512),
+      platform: payload.platform,
+      enabled: Boolean(payload.enabled),
+      roomInvites: Boolean(payload.roomInvites),
+      friendRequests: Boolean(payload.friendRequests),
+      dailyRewards: Boolean(payload.dailyRewards),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
 

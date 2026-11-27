@@ -181,6 +181,24 @@
         "roomId", "roomCode", "fromUid", "fromName", "fromAvatarId",
         "toUid", "mode", "maxPlayers", "seatsCount", "status", "createdAt", "updatedAt"
       ]
+    },
+    "PushSubscription": {
+      "title": "PushSubscription",
+      "description": "Strictly private per-user Firebase Cloud Messaging token and notification opt-in preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "token": { "type": "string", "maxLength": 512 },
+        "platform": { "type": "string", "enum": ["android", "ios", "web"] },
+        "enabled": { "type": "boolean" },
+        "roomInvites": { "type": "boolean" },
+        "friendRequests": { "type": "boolean" },
+        "dailyRewards": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "uid", "token", "platform", "enabled", "roomInvites", "friendRequests", "dailyRewards", "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -211,6 +229,10 @@
     "/roomInvites/{inviteId}": {
       "schema": { "$ref": "#/entities/RoomInvite" },
       "description": "Real-time table invitations delivered to friends."
+    },
+    "/pushSubscriptions/{userId}": {
+      "schema": { "$ref": "#/entities/PushSubscription" },
+      "description": "Private owner-only FCM push tokens and notification preference flags."
     }
   }
 }

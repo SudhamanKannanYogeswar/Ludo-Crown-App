@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Join Ludo Crown Table</title>
+    <meta
+      name="description"
+      content="Tap to join your friend's live Ludo Crown table or download Ludo Crown on Google Play."
+    />
+    <meta property="og:title" content="You're Invited to Ludo Crown!" />
+    <meta
+      property="og:description"
+      content="Tap to open Ludo Crown and jump straight into your friend's live multiplayer table."
+    />
+    <meta property="og:image" content="/pwa-512x512.png" />
+    <meta name="theme-color" content="#5BCAFF" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: linear-gradient(180deg, #5bcaff 0%, #bae6fd 45%, #fef9c3 100%);
+        color: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      .card {
+        width: 100%;
+        max-width: 400px;
+        background: #ffffff;
+        border: 3px solid #111827;
+        border-radius: 28px;
+        box-shadow: 0 8px 0 #111827;
+        padding: 28px 22px;
+        text-align: center;
+      }
+      .icon {
+        width: 84px;
+        height: 84px;
+        border-radius: 22px;
+        border: 3px solid #111827;
+        box-shadow: 0 4px 0 #111827;
+        object-fit: cover;
+        margin: 0 auto 14px;
+        display: block;
+      }
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+      }
+      .sub {
+        margin: 6px 0 18px;
+        font-size: 14px;
+        color: #475569;
+        font-weight: 600;
+      }
+      .code-box {
+        background: #fef9c3;
+        border: 2px solid #111827;
+        border-radius: 18px;
+        padding: 12px 16px;
+        margin-bottom: 18px;
+      }
+      .code-label {
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        color: #854d0e;
+        letter-spacing: 0.08em;
+      }
+      .code-value {
+        margin-top: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 30px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        color: #111827;
+      }
+      .btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 14px 18px;
+        border-radius: 18px;
+        border: 2px solid #111827;
+        box-shadow: 0 4px 0 #111827;
+        font-size: 15px;
+        font-weight: 900;
+        text-decoration: none;
+        cursor: pointer;
+        margin-bottom: 10px;
+      }
+      .btn:active {
+        transform: translateY(2px);
+        box-shadow: 0 2px 0 #111827;
+      }
+      .btn-blue {
+        background: linear-gradient(180deg, #38bdf8 0%, #1d4ed8 100%);
+        color: #ffffff;
+      }
+      .btn-gold {
+        background: linear-gradient(180deg, #fff066 0%, #f59e0b 100%);
+        color: #111827;
+      }
+      .btn-white {
+        background: #f8fafc;
+        color: #111827;
+      }
+      .note {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <img class="icon" src="/pwa-192x192.png" alt="Ludo Crown" />
+      <h1>Ludo Crown Invite</h1>
+      <p class="sub">Jump straight into your friend's multiplayer table</p>
+
+      <div id="codeWrap" class="code-box" style="display: none">
+        <div class="code-label">Table Room Code</div>
+        <div id="codeValue" class="code-value"></div>
+      </div>
+
+      <a id="openAppBtn" class="btn btn-blue" href="#">Open Ludo Crown App</a>
+      <a
+        id="playStoreBtn"
+        class="btn btn-gold"
+        href="https://play.google.com/store/apps/details?id=com.ludocrown.game"
+        >Download on Google Play</a
+      >
+      <button id="copyBtn" class="btn btn-white" type="button" style="display: none">
+        Copy Room Code
+      </button>
+
+      <p class="note">
+        Already have Ludo Crown installed? Tap <strong>Open Ludo Crown App</strong> to enter the
+        table automatically.
+      </p>
+    </main>
+
+    <script>
+      (function () {
+        var PLAY_STORE = 'https://play.google.com/store/apps/details?id=com.ludocrown.game';
+        var pathMatch = window.location.pathname.match(/\/join\/([A-Za-z0-9]{6})/i);
+        var params = new URLSearchParams(window.location.search);
+        var raw = (pathMatch && pathMatch[1]) || params.get('room') || params.get('code') || '';
+        var code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+
+        var codeWrap = document.getElementById('codeWrap');
+        var codeValue = document.getElementById('codeValue');
+        var openAppBtn = document.getElementById('openAppBtn');
+        var copyBtn = document.getElementById('copyBtn');
+
+        var isAndroid = /android/i.test(navigator.userAgent || '');
+        var customSchemeUrl = code ? 'ludocrown://join/' + code : 'ludocrown://open';
+        var androidIntentUrl =
+          'intent://join/' +
+          (code || '') +
+          '#Intent;scheme=ludocrown;package=com.ludocrown.game;S.browser_fallback_url=' +
+          encodeURIComponent(PLAY_STORE) +
+          ';end';
+
+        if (code.length === 6) {
+          codeWrap.style.display = 'block';
+          codeValue.textContent = code;
+          copyBtn.style.display = 'flex';
+          copyBtn.addEventListener('click', function () {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(code).then(function () {
+                copyBtn.textContent = 'Copied ' + code + '!';
+              });
+            }
+          });
+        }
+
+        openAppBtn.href = isAndroid ? androidIntentUrl : customSchemeUrl;
+
+        // On Android browsers, try opening Ludo Crown automatically once right away
+        if (isAndroid && code.length === 6) {
+          setTimeout(function () {
+            window.location.href = androidIntentUrl;
+          }, 350);
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -2,14 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
+  Bot,
   Check,
+  Clock,
   Copy,
   Crown,
   Dices,
   MessageSquare,
+  Pause,
   Play,
   RotateCcw,
   Send,
+  Share2,
   Sparkles,
   UserPlus,
   Users,
@@ -18,7 +22,12 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { BOARD_THEMES, BOT_ROSTER, PLAYER_COLOR_META, QUICK_CHAT_EMOTES } from '../data/catalog';
+import {
+  BOARD_THEMES,
+  BOT_ROSTER,
+  PLAYER_COLOR_META,
+  QUICK_CHAT_EMOTES,
+} from '../data/catalog';
 import {
   applyTokenMove,
   chooseAiTokenMove,
@@ -26,6 +35,12 @@ import {
   getMovableTokenIndices,
 } from '../game/ludoEngine';
 import { tabletopAudio } from '../game/sound';
+import {
+  buildPostMatchShareText,
+  buildRoomInviteShareText,
+  buildWhatsAppShareUrl,
+  shareInviteOrResult,
+} from '../services/shareService';
 import { MatchSummary, PlayerColor, RoomSeat, TokenPositions } from '../types';
 import { AdaptiveBannerAd } from './AdMobOverlays';
 import { DiceControl } from './DiceControl';
@@ -77,6 +92,7 @@ export function MatchArena() {
     submitMultiplayerTurn,
     sendChat,
     exitActiveRoom,
+    rematchOnlineRoom,
     closeOfflineMatch,
     recordGameplayEvent,
     recordMatchCompletion,
@@ -92,10 +108,55 @@ export function MatchArena() {
   } = useApp();
 
   const isOnline = Boolean(activeRoom);
+  const isPassAndPlay = !isOnline && Boolean(offlineMatch?.passAndPlay);
 
   const buildInitialOfflineState = useCallback((): LocalGameState => {
-    const count = offlineMatch?.playerCount || 4;
     const mode = offlineMatch?.mode || 'classic';
+
+    if (offlineMatch?.passAndPlay) {
+      const ppCount = offlineMatch.passAndPlay.playerCount;
+      const ppColors: PlayerColor[] =
+        ppCount === 2
+          ? ['red', 'yellow']
+          : ppCount === 3
+            ? ['red', 'green', 'yellow']
+            : ['red', 'green', 'yellow', 'blue'];
+
+      const seats: RoomSeat[] = ppColors.map((color, idx) => {
+        const customName =
+          offlineMatch.passAndPlay!.playerNames[idx]?.trim() ||
+          (idx === 0 ? profile.displayName : `Player ${idx + 1}`);
+        const avatarId =
+          idx === 0
+            ? profile.avatarId
+            : BOT_ROSTER[(idx - 1) % BOT_ROSTER.length]?.avatarId || profile.avatarId;
+        return {
+          uid: `local_p${idx + 1}`,
+          name: customName,
+          avatarId,
+          avatarFrame: idx === 0 ? profile.avatarFrame : 'frame_brass',
+          color,
+          isBot: false,
+          elo: profile.elo,
+        };
+      });
+
+      return {
+        seats,
+        tokens: createInitialTokens(mode, ppColors),
+        turnIndex: 0,
+        diceValue: 0,
+        turnPhase: 'roll',
+        consecutiveSixes: 0,
+        status: 'playing',
+        winnerColor: '',
+        winnerName: '',
+        lastActionText: `${seats[0].name}'s turn! Tap ROLL DICE to begin.`,
+        turnCount: 0,
+      };
+    }
+
+    const count = offlineMatch?.playerCount || 4;
     const colors: PlayerColor[] = count === 2 ? ['red', 'yellow'] : ['red', 'green', 'yellow', 'blue'];
 
     const seats: RoomSeat[] = [
@@ -159,13 +220,18 @@ export function MatchArena() {
   const [rerollUsedThisMatch, setRerollUsedThisMatch] = useState(false);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
   const [seatReaction, setSeatReaction] = useState<{ color: PlayerColor; text: string } | null>(null);
+  const [autoFillSeconds, setAutoFillSeconds] = useState(10);
+  const [autoFillPaused, setAutoFillPaused] = useState(false);
+  const [rematchLoading, setRematchLoading] = useState(false);
 
   const playerCapturesRef = useRef(0);
   const playerSixesRef = useRef(0);
   const summaryRecordedRef = useRef(false);
+  const autoFillFiredRef = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const lastMsgCountRef = useRef(0);
   const prevIsMyTurnRef = useRef(false);
+  const prevTurnIndexRef = useRef(-1);
   const bannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flashBanner = useCallback(
@@ -205,7 +271,16 @@ export function MatchArena() {
       playerSixesRef.current = 0;
       summaryRecordedRef.current = false;
       prevIsMyTurnRef.current = false;
-      flashBanner('GAME START!', 'start', 'Your Turn — Roll the Dice!', 1450);
+      prevTurnIndexRef.current = 0;
+      const firstPlayerName = offlineMatch.passAndPlay?.playerNames[0]?.trim() || 'Player 1';
+      flashBanner(
+        offlineMatch.passAndPlay ? 'PASS & PLAY!' : 'GAME START!',
+        'start',
+        offlineMatch.passAndPlay
+          ? `${firstPlayerName} goes first — Roll the Dice!`
+          : 'Your Turn — Roll the Dice!',
+        1450
+      );
     }
   }, [isOnline, offlineMatch, buildInitialOfflineState, flashBanner]);
 
@@ -214,6 +289,9 @@ export function MatchArena() {
       playerCapturesRef.current = 0;
       playerSixesRef.current = 0;
       summaryRecordedRef.current = false;
+      autoFillFiredRef.current = false;
+      setAutoFillSeconds(10);
+      setAutoFillPaused(false);
       setMatchSummary(null);
       setUnreadChat(0);
       setHoldPause(false);
@@ -266,22 +344,91 @@ export function MatchArena() {
   const playerNamesMap = useMemo(() => {
     const map: Partial<Record<PlayerColor, string>> = {};
     for (const seat of seats) {
-      map[seat.color] = seat.uid === myUid && !seat.isBot ? 'YOU' : seat.name.replace(' (Bot)', '');
+      map[seat.color] = isPassAndPlay
+        ? seat.name
+        : seat.uid === myUid && !seat.isBot
+          ? 'YOU'
+          : seat.name.replace(' (Bot)', '');
     }
     return map;
-  }, [seats, myUid]);
+  }, [seats, myUid, isPassAndPlay]);
 
   const isMyTurn =
     gameStatus === 'playing' &&
     !holdPause &&
     Boolean(currentSeat) &&
     !currentSeat.isBot &&
-    currentSeat.uid === myUid;
+    (isPassAndPlay || currentSeat.uid === myUid);
 
-  // Play crisp turn-ready chime & flash subtle "YOUR TURN!" banner whenever turn returns to the player
+  // Auto-Fill Quick Match After ~10 Seconds (Public tables only; private friend rooms never auto-fill)
+  const isPublicWaitingHost =
+    isOnline &&
+    Boolean(activeRoom) &&
+    activeRoom!.status === 'waiting' &&
+    activeRoom!.visibility === 'public' &&
+    activeRoom!.hostUid === myUid;
+
+  const waitingSeatsCount = activeRoom?.seats.length ?? 0;
+  const waitingMaxPlayers = activeRoom?.maxPlayers ?? 4;
+
+  useEffect(() => {
+    if (!isPublicWaitingHost || !activeRoom) return;
+
+    // If real players already filled every seat, start right away!
+    if (waitingSeatsCount >= waitingMaxPlayers) {
+      if (autoFillFiredRef.current) return;
+      const startTimer = setTimeout(() => {
+        if (!autoFillFiredRef.current) {
+          autoFillFiredRef.current = true;
+          hostStartRoom(false).catch(() => {
+            autoFillFiredRef.current = false;
+          });
+        }
+      }, 900);
+      return () => clearTimeout(startTimer);
+    }
+
+    if (autoFillPaused) return;
+
+    if (autoFillSeconds <= 0) {
+      if (!autoFillFiredRef.current) {
+        autoFillFiredRef.current = true;
+        hostStartRoom(true).catch(() => {
+          autoFillFiredRef.current = false;
+        });
+      }
+      return;
+    }
+
+    const tick = setTimeout(() => {
+      setAutoFillSeconds((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearTimeout(tick);
+  }, [
+    isPublicWaitingHost,
+    activeRoom,
+    waitingSeatsCount,
+    waitingMaxPlayers,
+    autoFillPaused,
+    autoFillSeconds,
+    hostStartRoom,
+  ]);
+
+  // Play crisp turn-ready chime & flash turn banner (supports Pass & Play handoff alerts!)
   useEffect(() => {
     if (isMyTurn && turnPhase === 'roll' && !boardAnimating && !rollingAnim) {
-      if (!prevIsMyTurnRef.current && turnCount > 0) {
+      if (isPassAndPlay) {
+        if (prevTurnIndexRef.current !== turnIndex && turnCount > 0 && currentSeat) {
+          tabletopAudio.playTurnReady();
+          flashBanner(
+            `${currentSeat.name.toUpperCase()}'S TURN`,
+            'turn',
+            `Pass phone to ${currentSeat.name} (${PLAYER_COLOR_META[currentSeat.color].label})`,
+            1250
+          );
+        }
+        prevTurnIndexRef.current = turnIndex;
+      } else if (!prevIsMyTurnRef.current && turnCount > 0) {
         tabletopAudio.playTurnReady();
         flashBanner('YOUR TURN!', 'turn', 'Tap ROLL DICE to play', 1100);
       }
@@ -289,7 +436,7 @@ export function MatchArena() {
     } else if (!isMyTurn) {
       prevIsMyTurnRef.current = false;
     }
-  }, [isMyTurn, turnPhase, boardAnimating, rollingAnim, turnCount, flashBanner]);
+  }, [isMyTurn, isPassAndPlay, turnIndex, currentSeat, turnPhase, boardAnimating, rollingAnim, turnCount, flashBanner]);
 
   const movableTokenIndices = useMemo(() => {
     if (gameStatus !== 'playing' || turnPhase !== 'move' || rawDiceValue < 1 || !currentSeat || holdPause) {
@@ -350,11 +497,11 @@ export function MatchArena() {
       // Comfortable 620ms dice tumble so players clearly feel and watch every roll
       setTimeout(async () => {
         setRollingAnim(false);
-        const isHumanMe = !actorSeat.isBot && actorSeat.uid === myUid;
+        const isHumanMe = !actorSeat.isBot && (isPassAndPlay || actorSeat.uid === myUid);
         if (rolled === 6) {
           tabletopAudio.playSixFanfare();
           triggerSeatBubble(actorSeat.color, 'Rolled a SIX!');
-          if (isHumanMe) {
+          if (!actorSeat.isBot && actorSeat.uid === myUid) {
             playerSixesRef.current += 1;
             recordGameplayEvent({ rollSixes: 1 });
           }
@@ -417,7 +564,10 @@ export function MatchArena() {
             setHoldPause(false);
             setHoldDiceOverride(null);
             setHoldStatusOverride(null);
-            const nextName = seats[nextIdx].uid === myUid && !seats[nextIdx].isBot ? 'Your turn' : `${seats[nextIdx].name}'s turn`;
+            const nextName =
+              !isPassAndPlay && seats[nextIdx].uid === myUid && !seats[nextIdx].isBot
+                ? 'Your turn'
+                : `${seats[nextIdx].name}'s turn`;
             const text = `${actorSeat.name} rolled ${rolled} (no move). ${nextName}!`;
             if (isOnline) {
               await submitMultiplayerTurn({
@@ -457,7 +607,9 @@ export function MatchArena() {
           legal.length === 1 || allSameSpot
             ? `${actorSeat.name} rolled ${rolled} — moving pawn...`
             : isHumanMe
-              ? `You rolled ${rolled}! Tap any bouncing pawn to move.`
+              ? isPassAndPlay
+                ? `${actorSeat.name} rolled ${rolled}! Tap any bouncing pawn.`
+                : `You rolled ${rolled}! Tap any bouncing pawn to move.`
               : `${actorSeat.name} rolled ${rolled} — choosing a pawn...`;
 
         if (isOnline) {
@@ -491,6 +643,7 @@ export function MatchArena() {
       gameStatus,
       turnPhase,
       myUid,
+      isPassAndPlay,
       consecutiveSixes,
       turnIndex,
       seats,
@@ -567,15 +720,17 @@ export function MatchArena() {
 
         if (outcome.wonGame && !summaryRecordedRef.current) {
           summaryRecordedRef.current = true;
-          const won = !actorSeat.isBot && actorSeat.uid === myUid;
+          const won = isPassAndPlay ? true : !actorSeat.isBot && actorSeat.uid === myUid;
           const isTournament = Boolean(offlineMatch?.tournamentContext);
-          const coinsEarned = won
-            ? isTournament
-              ? offlineMatch!.tournamentContext!.round === 'final'
-                ? offlineMatch!.tournamentContext!.prizePool
-                : 300
-              : 160
-            : 45;
+          const coinsEarned = isPassAndPlay
+            ? 100
+            : won
+              ? isTournament
+                ? offlineMatch!.tournamentContext!.round === 'final'
+                  ? offlineMatch!.tournamentContext!.prizePool
+                  : 300
+                : 160
+              : 45;
 
           const summary: MatchSummary = {
             won,
@@ -588,8 +743,8 @@ export function MatchArena() {
             capturesByPlayer: playerCapturesRef.current,
             sixesByPlayer: playerSixesRef.current,
             coinsEarned,
-            xpEarned: won ? 110 : 40,
-            eloDelta: isTournament ? (won ? 35 : -10) : won ? 12 : -4,
+            xpEarned: isPassAndPlay ? 75 : won ? 110 : 40,
+            eloDelta: isPassAndPlay ? 0 : isTournament ? (won ? 35 : -10) : won ? 12 : -4,
             turnsPlayed: turnCount + 1,
             doubledWithAd: false,
           };
@@ -608,6 +763,7 @@ export function MatchArena() {
       tokens,
       activeColors,
       myUid,
+      isPassAndPlay,
       turnIndex,
       seats.length,
       isOnline,
@@ -697,6 +853,42 @@ export function MatchArena() {
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
+  const handleNativeShareRoom = async () => {
+    if (!activeRoom) return;
+    const text = buildRoomInviteShareText({
+      roomCode: activeRoom.roomCode,
+      hostName: profile.displayName,
+      maxPlayers: activeRoom.maxPlayers,
+      mode: activeRoom.mode,
+    });
+    const result = await shareInviteOrResult({
+      title: `Join my Ludo Crown Table (${activeRoom.roomCode})`,
+      text,
+      dialogTitle: 'Invite friends to Ludo Crown',
+    });
+    if (result === 'copied') {
+      showToast('Invite message + Play Store link copied! Paste in WhatsApp or chat.', 'success');
+    }
+  };
+
+  const handleNativeShareSummary = async () => {
+    if (!matchSummary) return;
+    const text = buildPostMatchShareText({
+      summary: matchSummary,
+      playerName: profile.displayName,
+      isPassAndPlay,
+      roomCode: activeRoom?.roomCode,
+    });
+    const result = await shareInviteOrResult({
+      title: 'Ludo Crown Match Result',
+      text,
+      dialogTitle: 'Share Ludo Crown Result',
+    });
+    if (result === 'copied') {
+      showToast('Match result + Play Store link copied!', 'success');
+    }
+  };
+
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
@@ -725,7 +917,26 @@ export function MatchArena() {
     playerSixesRef.current = 0;
     summaryRecordedRef.current = false;
     prevIsMyTurnRef.current = false;
-    flashBanner('GAME START!', 'start', 'Your Turn — Roll the Dice!', 1450);
+    prevTurnIndexRef.current = 0;
+    const firstPlayerName = offlineMatch?.passAndPlay?.playerNames[0]?.trim() || 'Player 1';
+    flashBanner(
+      isPassAndPlay ? 'PASS & PLAY!' : 'GAME START!',
+      'start',
+      isPassAndPlay ? `${firstPlayerName} goes first — Roll the Dice!` : 'Your Turn — Roll the Dice!',
+      1450
+    );
+  };
+
+  const handleOnlineRematch = async () => {
+    if (!activeRoom || rematchLoading) return;
+    setRematchLoading(true);
+    try {
+      setMatchSummary(null);
+      summaryRecordedRef.current = false;
+      await rematchOnlineRoom(activeRoom);
+    } finally {
+      setRematchLoading(false);
+    }
   };
 
   const handleTacticalAdReroll = () => {
@@ -744,7 +955,7 @@ export function MatchArena() {
 
   const renderSeatPill = (seat: RoomSeat) => {
     const active = seat.color === currentSeat?.color && gameStatus === 'playing';
-    const isMe = !seat.isBot && seat.uid === myUid;
+    const isMe = !isPassAndPlay && !seat.isBot && seat.uid === myUid;
     const meta = PLAYER_COLOR_META[seat.color];
     const seatSteps = tokens[seat.color];
     const bubble = seatReaction?.color === seat.color ? seatReaction.text : null;
@@ -950,7 +1161,7 @@ export function MatchArena() {
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
             {/* Left / Primary Column: Room Code Card + 2x2 Table Seats + Board Edition + Start Match */}
             <div className="lg:col-span-3 space-y-5">
-              {/* Top Room Code Card */}
+              {/* Top Room Code Card with One-Tap WhatsApp & Native Share */}
               <div className="studio-card rounded-3xl p-4 sm:p-5 space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -966,6 +1177,34 @@ export function MatchArena() {
                   >
                     {copiedCode ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                     <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+
+                {/* One-Tap WhatsApp + Native Share Buttons */}
+                <div className="grid grid-cols-2 gap-2.5 pt-0.5">
+                  <a
+                    href={buildWhatsAppShareUrl(
+                      buildRoomInviteShareText({
+                        roomCode: activeRoom.roomCode,
+                        hostName: profile.displayName,
+                        maxPlayers: activeRoom.maxPlayers,
+                        mode: activeRoom.mode,
+                      })
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3 rounded-2xl game-btn-green font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                  >
+                    <Send className="w-3.5 h-3.5 shrink-0" />
+                    <span>WhatsApp Invite</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleNativeShareRoom}
+                    className="py-2.5 px-3 rounded-2xl game-btn-blue font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Share2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>Share Code</span>
                   </button>
                 </div>
 
@@ -1116,21 +1355,77 @@ export function MatchArena() {
                 </div>
               </div>
 
+              {/* Auto-Fill Quick Match Countdown Banner (Public Rooms Only) */}
+              {activeRoom.visibility === 'public' && (
+                <div className="rounded-2xl bg-gradient-to-r from-[#EFF8FF] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_3px_0_#111827] p-3.5 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-[#1D4ED8] text-white border-2 border-[#111827] flex items-center justify-center shrink-0">
+                        {autoFillPaused ? <Pause className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] truncate">
+                          {activeRoom.seats.length >= activeRoom.maxPlayers
+                            ? 'Table full! Starting match...'
+                            : isHost
+                              ? autoFillPaused
+                                ? 'Auto-fill paused · Waiting for players'
+                                : `Finding players · Smart bots join in ${autoFillSeconds}s`
+                              : 'Public Quick Match · Auto-starts soon'}
+                        </div>
+                        <div className="text-[11px] font-semibold text-[#475569]">
+                          {isHost
+                            ? 'Open seats auto-fill after 10s so you never wait alone.'
+                            : 'Host will launch as soon as seats fill or timer finishes.'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {isHost && activeRoom.seats.length < activeRoom.maxPlayers && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAutoFillPaused((p) => {
+                            const next = !p;
+                            if (!next && autoFillSeconds === 0) setAutoFillSeconds(10);
+                            return next;
+                          });
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-white border-2 border-[#111827] text-[11px] font-display font-extrabold text-[#111827] hover:bg-[#FEF9C3] cursor-pointer shrink-0 inline-flex items-center gap-1"
+                      >
+                        <Clock className="w-3 h-3 text-[#1D4ED8]" />
+                        {autoFillPaused ? 'Resume' : 'Wait'}
+                      </button>
+                    )}
+                  </div>
+
+                  {isHost && !autoFillPaused && activeRoom.seats.length < activeRoom.maxPlayers && (
+                    <div className="h-2 rounded-full bg-white border border-[#93C5FD] overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#2563EB] to-[#10B981] transition-all duration-700"
+                        style={{ width: `${Math.min(100, ((10 - autoFillSeconds) / 10) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Start Match Primary Action */}
               <div className="pt-1 space-y-2.5">
                 {isHost ? (
                   <>
                     <button
                       type="button"
-                      onClick={() =>
-                        hostStartRoom(activeRoom.seats.length < 2)
-                      }
+                      onClick={() => {
+                        autoFillFiredRef.current = true;
+                        hostStartRoom(activeRoom.seats.length < 2);
+                      }}
                       className="w-full py-3.5 px-5 rounded-2xl font-display font-extrabold text-base game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Play className="w-4 h-4 fill-current" />
                       <span>
                         {activeRoom.seats.length < 2
-                          ? 'Fill bots & start match'
+                          ? 'Fill bots & start now'
                           : 'Start match'}
                       </span>
                     </button>
@@ -1138,7 +1433,10 @@ export function MatchArena() {
                       activeRoom.seats.length < activeRoom.maxPlayers && (
                         <button
                           type="button"
-                          onClick={() => hostStartRoom(true)}
+                          onClick={() => {
+                            autoFillFiredRef.current = true;
+                            hostStartRoom(true);
+                          }}
                           className="w-full py-2.5 px-4 rounded-2xl font-display font-extrabold text-xs game-btn-white cursor-pointer"
                         >
                           Fill remaining seats with bots &amp; start
@@ -1315,6 +1613,7 @@ export function MatchArena() {
 
   const canUseAdReroll =
     !isOnline &&
+    !isPassAndPlay &&
     !offlineMatch?.tournamentContext &&
     isMyTurn &&
     turnPhase === 'move' &&
@@ -1331,11 +1630,15 @@ export function MatchArena() {
     ? 'Moving pawn...'
     : holdPause
       ? holdStatusOverride || 'Passing turn...'
-      : isMyTurn && turnPhase === 'roll'
-        ? 'YOUR TURN — TAP ROLL DICE!'
-        : isMyTurn && turnPhase === 'move'
-          ? 'YOUR TURN — TAP A BOUNCING PAWN!'
-          : `${currentSeat?.name.replace(' (Bot)', '') || 'Opponent'}'s Turn...`;
+      : isPassAndPlay && currentSeat
+        ? turnPhase === 'roll'
+          ? `${currentSeat.name.toUpperCase()} (${PLAYER_COLOR_META[currentSeat.color].label}) — ROLL DICE!`
+          : `${currentSeat.name.toUpperCase()} — TAP A BOUNCING PAWN!`
+        : isMyTurn && turnPhase === 'roll'
+          ? 'YOUR TURN — TAP ROLL DICE!'
+          : isMyTurn && turnPhase === 'move'
+            ? 'YOUR TURN — TAP A BOUNCING PAWN!'
+            : `${currentSeat?.name.replace(' (Bot)', '') || 'Opponent'}'s Turn...`;
 
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
@@ -1354,9 +1657,11 @@ export function MatchArena() {
           <div className="text-[11px] sm:text-xs font-display font-extrabold text-[#111827] truncate">
             {isOnline
               ? `Live Table · ${activeRoom!.roomCode}`
-              : offlineMatch?.tournamentContext
-                ? `${offlineMatch.tournamentContext.tournamentTitle}`
-                : `VS Computer · ${(offlineMatch?.difficulty || 'tactical').toUpperCase()}`}
+              : isPassAndPlay
+                ? `Pass & Play · ${seats.length}P Offline`
+                : offlineMatch?.tournamentContext
+                  ? `${offlineMatch.tournamentContext.tournamentTitle}`
+                  : `VS Computer · ${(offlineMatch?.difficulty || 'tactical').toUpperCase()}`}
           </div>
         </div>
 
@@ -1399,7 +1704,7 @@ export function MatchArena() {
                 tokens={tokens}
                 activeColors={activeColors}
                 currentTurnColor={currentSeat?.color || 'red'}
-                myColor={mySeat?.color || null}
+                myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
                 playerNames={playerNamesMap}
                 movableTokenIndices={movableTokenIndices}
                 canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
@@ -1453,7 +1758,9 @@ export function MatchArena() {
                       : shouldAutoPlayOnlyMove
                         ? 'Moving only legal pawn...'
                         : isMyTurn && turnPhase === 'roll'
-                          ? 'Your Turn — Tap to Roll!'
+                          ? isPassAndPlay && currentSeat
+                            ? `${currentSeat.name}'s Turn — Tap to Roll!`
+                            : 'Your Turn — Tap to Roll!'
                           : isMyTurn && turnPhase === 'move'
                             ? 'Tap a bouncing pawn on the board'
                             : lastActionText
@@ -1488,7 +1795,7 @@ export function MatchArena() {
                 tokens={tokens}
                 activeColors={activeColors}
                 currentTurnColor={currentSeat?.color || 'red'}
-                myColor={mySeat?.color || null}
+                myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
                 playerNames={playerNamesMap}
                 movableTokenIndices={movableTokenIndices}
                 canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
@@ -1527,7 +1834,11 @@ export function MatchArena() {
                     }}
                   />
                   <span className="font-display text-sm font-extrabold text-[#111827]">
-                    {isMyTurn ? 'YOUR TURN!' : `${currentSeat?.name.replace(' (Bot)', '')}'s Turn`}
+                    {isPassAndPlay && currentSeat
+                      ? `${currentSeat.name}'s Turn`
+                      : isMyTurn
+                        ? 'YOUR TURN!'
+                        : `${currentSeat?.name.replace(' (Bot)', '')}'s Turn`}
                   </span>
                 </div>
                 <span
@@ -1826,7 +2137,11 @@ export function MatchArena() {
                 {matchSummary.won ? <Crown className="w-8 h-8" /> : <Sparkles className="w-8 h-8 text-[#1D4ED8]" />}
               </div>
               <h2 className="mt-3 font-display text-2xl font-black text-[#111827] tracking-tight">
-                {matchSummary.won ? 'CROWN VICTORY!' : `${matchSummary.winnerName} WINS`}
+                {isPassAndPlay
+                  ? `${matchSummary.winnerName.toUpperCase()} WINS!`
+                  : matchSummary.won
+                    ? 'CROWN VICTORY!'
+                    : `${matchSummary.winnerName} WINS`}
               </h2>
               <p className="mt-1 text-xs font-semibold text-[#64748B]">
                 Completed in {matchSummary.turnsPlayed} turns
@@ -1841,9 +2156,15 @@ export function MatchArena() {
                 </div>
               </div>
               <div className="p-3 rounded-2xl bg-[#DBEAFE] border border-[#93C5FD]">
-                <div className="text-[11px] font-bold text-[#1E40AF]">ELO</div>
+                <div className="text-[11px] font-bold text-[#1E40AF]">
+                  {isPassAndPlay ? 'Mode' : 'ELO'}
+                </div>
                 <div className="mt-1 font-mono tabular-nums text-base font-extrabold text-[#111827]">
-                  {matchSummary.eloDelta >= 0 ? `+${matchSummary.eloDelta}` : matchSummary.eloDelta}
+                  {isPassAndPlay
+                    ? `${seats.length}P Local`
+                    : matchSummary.eloDelta >= 0
+                      ? `+${matchSummary.eloDelta}`
+                      : matchSummary.eloDelta}
                 </div>
               </div>
               <div className="p-3 rounded-2xl bg-[#DCFCE7] border border-[#86EFAC]">
@@ -1869,15 +2190,71 @@ export function MatchArena() {
               </button>
             )}
 
+            {/* One-Tap Post-Match WhatsApp + Native Share Row */}
+            <div className="mt-3 grid grid-cols-2 gap-2.5">
+              <a
+                href={buildWhatsAppShareUrl(
+                  buildPostMatchShareText({
+                    summary: matchSummary,
+                    playerName: profile.displayName,
+                    isPassAndPlay,
+                    roomCode: activeRoom?.roomCode,
+                  })
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-2.5 px-3 rounded-2xl game-btn-green font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>WhatsApp</span>
+              </a>
+              <button
+                type="button"
+                onClick={handleNativeShareSummary}
+                className="py-2.5 px-3 rounded-2xl game-btn-white font-display font-extrabold text-xs inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                <span>Share Result</span>
+              </button>
+            </div>
+
             <div className="mt-3 flex items-center gap-3">
               {!isOnline && !matchSummary.isTournament && (
                 <button
                   type="button"
                   onClick={handlePracticeRestart}
-                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer"
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl font-display font-extrabold text-sm game-btn-blue btn-gloss-sheen cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
                   Play Again
+                </button>
+              )}
+              {isOnline && activeRoom && (
+                <button
+                  type="button"
+                  disabled={rematchLoading}
+                  onClick={handleOnlineRematch}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl font-display font-extrabold text-sm game-btn-blue btn-gloss-sheen cursor-pointer disabled:opacity-60"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {rematchLoading
+                    ? 'Creating...'
+                    : activeRoom.visibility === 'private'
+                      ? 'Rematch Friends'
+                      : 'Play Again'}
+                </button>
+              )}
+              {!isOnline && matchSummary.isTournament && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeOfflineMatch();
+                    setActiveTab('tournaments');
+                  }}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer"
+                >
+                  <Crown className="w-4 h-4" />
+                  Back to Cup
                 </button>
               )}
               <button

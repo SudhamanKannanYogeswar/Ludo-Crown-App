@@ -116,7 +116,9 @@ jobs:
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks
           SHA1=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA1:" | awk '{print $2}' || true)
+          SHA256=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA256:" | awk '{print $2}' || true)
           echo "sha1=$SHA1" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           ./gradlew bundleRelease assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
             -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
@@ -138,6 +140,7 @@ jobs:
       - name: Publish Android Build & Play Store Readiness Summary
         run: |
           KEY_SHA1="${{ steps.signed_release.outputs.sha1 }}"
+          KEY_SHA256="${{ steps.signed_release.outputs.sha256 }}"
           GS_SHA1="${{ steps.android_config.outputs.gs_sha1 }}"
           {
             echo "## Ludo Crown — Android & Play Store Build Summary"
@@ -160,11 +163,14 @@ jobs:
               echo "| Play Store Bundle & APK | Signed | Download \`LudoCrown-PlayStore-Signed-Release\`: upload \`app-release.aab\` to Play Console & test \`app-release.apk\` on phone |"
               if [ -n "$KEY_SHA1" ]; then
                 echo ""
-                echo "### Google Sign-In SHA-1 Match Check"
+                echo "### Google Sign-In & Deep-Link Fingerprints"
                 echo "- **APK Keystore SHA-1**: \`$KEY_SHA1\`"
+                if [ -n "$KEY_SHA256" ]; then
+                  echo "- **APK Keystore SHA-256 (for \`public/.well-known/assetlinks.json\` & Firebase)**: \`$KEY_SHA256\`"
+                fi
                 echo "- **SHA-1(s) in \`google-services.json\`**: \`${GS_SHA1:-NONE FOUND}\`"
                 if echo "$GS_SHA1" | grep -qi "$KEY_SHA1"; then
-                  echo "- **Result**: MATCHED — Native Google Sign-In is ready for direct APK installs! *(Once uploaded to Play Console, also add Google Play App Signing SHA-1 in Firebase Console.)*"
+                  echo "- **Result**: MATCHED — Native Google Sign-In is ready for direct APK installs! *(Once uploaded to Play Console, also add Google Play App Signing SHA-1 & SHA-256 in Firebase Console and \`assetlinks.json\`.)*"
                 else
                   echo "- **Result**: MISMATCH — Paste \`$KEY_SHA1\` in Firebase Console -> Android app \`com.ludocrown.game\`, re-download \`google-services.json\`, and update \`GOOGLE_SERVICES_JSON_BASE64\` secret."
                 fi

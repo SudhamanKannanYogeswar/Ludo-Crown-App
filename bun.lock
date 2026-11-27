@@ -7,7 +7,10 @@
       "dependencies": {
         "@capacitor-community/admob": "6",
         "@capacitor-firebase/authentication": "6",
+        "@capacitor/app": "6",
         "@capacitor/core": "6",
+        "@capacitor/push-notifications": "6",
+        "@capacitor/share": "6",
         "@firebase/eslint-plugin-security-rules": "^0.0.2",
         "@google/genai": "^2.4.0",
         "@tailwindcss/vite": "^4.3.3",
@@ -227,7 +230,13 @@
 
     "@capacitor-firebase/authentication": ["@capacitor-firebase/authentication@6.3.1", "", { "peerDependencies": { "@capacitor/core": "^6.0.0", "firebase": "^10.9.0 || ^11.0.0" }, "optionalPeers": ["firebase"] }, "sha512-Bv0UMwvzK7nEEFBx8hfrolZ3ueLXcCGvtu0RaJo4sOJuVJD39wu0u9OlZIIkkAMY8h3RdMNo2n4kal3Fl8aIAA=="],
 
+    "@capacitor/app": ["@capacitor/app@6.0.3", "", { "peerDependencies": { "@capacitor/core": "^6.0.0" } }, "sha512-4gFUCbcVz0N/YYN32OBFerocWXslIv3Nc90gDiRsBkJc0plwK6kIUT6PKa5WtW2kfhteUeCVXQbvArH2fH+0Ug=="],
+
     "@capacitor/core": ["@capacitor/core@6.2.4", "", { "dependencies": { "tslib": "^2.1.0" } }, "sha512-9AvlC4PE4KErHfVsYNTTQT71gVfKZVk3N4SDYme0fyFbmgL3enjzwJYZxabMuVAcXbGTCzo48SjEcRYg1ByQbw=="],
+
+    "@capacitor/push-notifications": ["@capacitor/push-notifications@6.0.5", "", { "peerDependencies": { "@capacitor/core": "^6.0.0" } }, "sha512-CsRmb0cnZd9Uwx24ym4My5fNKrQvwI4D51aMEph5pUZy+LAjp6q0y4NJe8DEgwaVdAqVLbb4rqn75AZ4WSiFYg=="],
+
+    "@capacitor/share": ["@capacitor/share@6.0.4", "", { "peerDependencies": { "@capacitor/core": "^6.0.0" } }, "sha512-Ij8C3as4n6L+SUj3M1ko+DGIsrDw2VTkn5Y/pQnFRI9dRk6YoSpGKLN54yOyN7ew3N9bVa8Rko+dFwdcNg7ESA=="],
 
     "@emnapi/core": ["@emnapi/core@2.0.0-beta.2", "", { "dependencies": { "@emnapi/wasi-threads": "2.2.0", "tslib": "^2.4.0" } }, "sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A=="],
 

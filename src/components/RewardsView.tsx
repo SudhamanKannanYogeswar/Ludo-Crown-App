@@ -1,4 +1,4 @@
-import { Check, Gem, Gift, Play, Ticket } from 'lucide-react';
+import { Bell, BellRing, Check, Crown, Gem, Gift, LifeBuoy, Play, Ticket } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
   DAILY_CHALLENGES,
@@ -14,6 +14,10 @@ export function RewardsView() {
     claimDailyStreak,
     claimDailyChallenge,
     triggerRewardedAd,
+    notificationPrefs,
+    notificationPermission,
+    enablePushNotifications,
+    updateNotificationPref,
     showToast,
   } = useApp();
 
@@ -21,6 +25,8 @@ export function RewardsView() {
   const claimedToday = wallet.lastDailyClaimDate === today;
   const nextDayIndex = (wallet.dailyStreak % 7) + 1;
   const rewardedUsedToday = wallet.adDate === today ? wallet.adRewardedCountToday : 0;
+  const isLowCoins = wallet.coins < 200;
+  const hasGoldenDice = wallet.unlockedCosmetics.includes('dice_jade');
 
   return (
     <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-5 pb-8 space-y-5">
@@ -30,7 +36,7 @@ export function RewardsView() {
             Rewards &amp; Quests
           </h1>
           <p className="text-xs text-[#475569] mt-0.5">
-            Claim daily streak gifts, finish table quests, or collect opt-in video bonuses.
+            Climb the 7-day streak for the Golden Crown Dice, complete quests, or collect opt-in bonuses.
           </p>
         </div>
 
@@ -49,34 +55,55 @@ export function RewardsView() {
         </button>
       </div>
 
-      {/* 7-Day Streak Row */}
-      <section className="studio-card rounded-3xl p-5">
-        <div className="text-xs font-extrabold text-[#475569] mb-3">
-          7-DAY LOGIN STREAK · DAY {wallet.dailyStreak}
+      {/* 7-Day Escalating Streak Row with Day 7 Cosmetic Grand Prize */}
+      <section className="studio-card rounded-3xl p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-extrabold text-[#475569]">
+            7-DAY ESCALATING STREAK · DAY {wallet.dailyStreak}
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FEF9C3] border-2 border-[#111827] text-[11px] font-display font-extrabold text-[#111827]">
+            <Crown className="w-3.5 h-3.5 text-[#D97706]" />
+            <span>
+              Day 7 Grand Prize: {hasGoldenDice ? 'Crystal Pearl Board / +25 Gems' : 'Golden Crown Dice'}
+            </span>
+          </div>
         </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5">
           {DAILY_STREAK_REWARDS.map((item) => {
             const isPast =
               item.day <= (wallet.dailyStreak % 7) ||
               (wallet.dailyStreak > 0 && wallet.dailyStreak % 7 === 0);
             const isTodayTarget = !claimedToday && item.day === nextDayIndex;
+            const isDay7 = item.day === 7;
             return (
               <div
                 key={item.day}
-                className={`rounded-2xl p-3 border-2 text-center ${
+                className={`rounded-2xl p-3 border-2 text-center flex flex-col justify-between ${
+                  isDay7 ? 'col-span-2 sm:col-span-2 lg:col-span-1' : ''
+                } ${
                   isTodayTarget
-                    ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
-                    : isPast
-                      ? 'bg-[#F1F5F9] border-[#CBD5E1] opacity-60'
-                      : 'bg-white border-[#CBD5E1]'
+                    ? 'bg-gradient-to-b from-[#FFF599] to-[#FDE047] border-[#111827] shadow-[0_3px_0_#111827]'
+                    : isDay7
+                      ? 'bg-gradient-to-b from-[#FEF9C3] to-[#FDE68A] border-[#D97706]'
+                      : isPast
+                        ? 'bg-[#F1F5F9] border-[#CBD5E1] opacity-65'
+                        : 'bg-white border-[#CBD5E1]'
                 }`}
               >
-                <div className="text-[11px] font-extrabold text-[#64748B]">DAY {item.day}</div>
+                <div className="flex items-center justify-center gap-1 text-[11px] font-extrabold text-[#64748B]">
+                  {isDay7 && <Crown className="w-3.5 h-3.5 text-[#D97706]" />}
+                  <span>DAY {item.day}</span>
+                </div>
                 <div className="mt-1.5 font-mono tabular-nums text-base font-black text-[#111827]">
                   +{item.coins}
                 </div>
-                <div className="text-[10px] font-semibold text-[#475569] mt-0.5">
-                  {item.gems > 0 ? `Coins + ${item.gems} Gems` : 'Coins'}
+                <div className="text-[10px] font-bold text-[#475569] mt-0.5 leading-tight">
+                  {isDay7
+                    ? `${item.gems} Gems + Golden Dice`
+                    : item.gems > 0
+                      ? `Coins + ${item.gems} Gems`
+                      : 'Coins'}
                 </div>
               </div>
             );
@@ -141,11 +168,34 @@ export function RewardsView() {
           <div>
             <div className="font-display text-lg font-extrabold text-[#111827]">Bonus Coin Vault</div>
             <div className="text-xs text-[#64748B] mt-0.5">
-              Opt-in rewarded videos ({rewardedUsedToday}/{ADMOB_CONFIG.dailyRewardedCap} today)
+              100% opt-in rewarded videos ({rewardedUsedToday}/{ADMOB_CONFIG.dailyRewardedCap} today)
             </div>
           </div>
 
           <div className="space-y-3">
+            {isLowCoins && (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-[#FFF599] to-[#FDE047] border-2 border-[#111827] shadow-[0_3px_0_#111827] flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-display text-sm font-extrabold text-[#111827]">
+                    Low Coin Rescue · +300
+                  </div>
+                  <div className="text-xs text-[#475569]">Quick opt-in refill to stay at the tables</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    triggerRewardedAd('low_coin_rescue', () => {
+                      showToast('+300 Rescue Coins credited!', 'success');
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer whitespace-nowrap"
+                >
+                  <LifeBuoy className="w-3.5 h-3.5" />
+                  Refill
+                </button>
+              </div>
+            )}
+
             <div className="p-4 rounded-2xl bg-[#FEF9C3] border-2 border-[#111827] flex items-center justify-between gap-3">
               <div>
                 <div className="font-display text-sm font-extrabold text-[#111827]">+250 Bonus Coins</div>
@@ -206,7 +256,106 @@ export function RewardsView() {
         </section>
       </div>
 
+      {/* Push Notifications & Game Alerts Card (Android 13+ / FCM Opt-In Compliant) */}
+      <section className="studio-card rounded-3xl p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#EFF6FF] border-2 border-[#111827] flex items-center justify-center text-[#1D4ED8] shrink-0">
+              {notificationPrefs.enabled ? (
+                <BellRing className="w-5 h-5" />
+              ) : (
+                <Bell className="w-5 h-5" />
+              )}
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-extrabold text-[#111827]">
+                Push Notifications &amp; Alerts
+              </h2>
+              <p className="text-xs text-[#475569]">
+                Get notified for friend table invites, accepted friend requests, and Daily Gift / Lucky Spin resets.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => enablePushNotifications()}
+            disabled={notificationPermission === 'unsupported'}
+            className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl font-display font-extrabold text-xs whitespace-nowrap cursor-pointer disabled:opacity-50 ${
+              notificationPrefs.enabled && notificationPermission === 'granted'
+                ? 'bg-[#DCFCE7] border-2 border-[#10B981] text-[#047857]'
+                : 'game-btn-blue'
+            }`}
+          >
+            {notificationPrefs.enabled && notificationPermission === 'granted' ? (
+              <>
+                <Check className="w-4 h-4" />
+                Alerts Active
+              </>
+            ) : notificationPermission === 'denied' ? (
+              'Blocked in Device Settings'
+            ) : (
+              <>
+                <BellRing className="w-4 h-4" />
+                Enable Alerts
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {(
+            [
+              {
+                key: 'roomInvites',
+                title: 'Friend Table Invites',
+                desc: 'Know immediately when your squad opens a room.',
+              },
+              {
+                key: 'friendRequests',
+                title: 'Friend Requests',
+                desc: 'Alerts for new requests and accepted invites.',
+              },
+              {
+                key: 'dailyRewards',
+                title: 'Daily Gift & Spin Reset',
+                desc: 'Protect your 7-Day Streak for Golden Crown Dice.',
+              },
+            ] as const
+          ).map((row) => {
+            const active = notificationPrefs[row.key];
+            return (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => updateNotificationPref(row.key, !active)}
+                className={`p-3.5 rounded-2xl border-2 text-left transition-colors cursor-pointer flex items-start justify-between gap-3 ${
+                  active
+                    ? 'bg-[#EFF6FF] border-[#1D4ED8]'
+                    : 'bg-[#F8FAFC] border-[#CBD5E1] opacity-75'
+                }`}
+              >
+                <div className="min-w-0">
+                  <div className="font-display text-xs font-extrabold text-[#111827]">
+                    {row.title}
+                  </div>
+                  <div className="text-[11px] text-[#64748B] mt-0.5 leading-snug">{row.desc}</div>
+                </div>
+                <span
+                  className={`w-9 h-5 rounded-full border-2 border-[#111827] flex items-center px-0.5 shrink-0 transition-colors ${
+                    active ? 'bg-[#10B981] justify-end' : 'bg-[#CBD5E1] justify-start'
+                  }`}
+                >
+                  <span className="w-3.5 h-3.5 rounded-full bg-white border border-[#111827]" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <AndroidAdMobGuideCard />
     </div>
   );
 }
+

@@ -208,14 +208,30 @@ export const AVATAR_FRAMES: AvatarFrameSpec[] = [
   },
 ];
 
-export const DAILY_STREAK_REWARDS = [
+export const DAILY_STREAK_REWARDS: {
+  day: number;
+  coins: number;
+  gems: number;
+  label: string;
+  cosmeticId?: string;
+  fallbackCosmeticId?: string;
+  cosmeticLabel?: string;
+}[] = [
   { day: 1, coins: 150, gems: 0, label: '150 Coins' },
   { day: 2, coins: 225, gems: 0, label: '225 Coins' },
   { day: 3, coins: 300, gems: 2, label: '300 Coins + 2 Gems' },
   { day: 4, coins: 400, gems: 0, label: '400 Coins' },
   { day: 5, coins: 500, gems: 3, label: '500 Coins + 3 Gems' },
   { day: 6, coins: 650, gems: 4, label: '650 Coins + 4 Gems' },
-  { day: 7, coins: 1000, gems: 10, label: '1,000 Coins + 10 Gems' },
+  {
+    day: 7,
+    coins: 1000,
+    gems: 10,
+    cosmeticId: 'dice_jade',
+    fallbackCosmeticId: 'board_marble',
+    cosmeticLabel: 'Golden Crown Dice',
+    label: '1,000 Coins + 10 Gems + Golden Crown Dice',
+  },
 ];
 
 export const DAILY_CHALLENGES: DailyChallengeDef[] = [
@@ -381,3 +397,68 @@ export function getTodayDateString(): string {
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+
+export interface WeekendCupSchedule {
+  isLive: boolean;
+  weekNumber: number;
+  cupTitle: string;
+  countdownLabel: string;
+  prizeCoins: number;
+  prizeGems: number;
+  entryFee: number;
+}
+
+/**
+ * Timed Weekend Crown Mini-Cup schedule (Friday 18:00 -> Sunday 23:59 local time).
+ */
+export function getWeekendCupSchedule(now: Date = new Date()): WeekendCupSchedule {
+  const day = now.getDay(); // 0=Sun, 5=Fri, 6=Sat
+  const hour = now.getHours();
+  const isLive = day === 6 || day === 0 || (day === 5 && hour >= 18);
+
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  const daysSinceStart = Math.floor((now.getTime() - startOfYear.getTime()) / 86_400_000);
+  const weekNumber = Math.max(1, Math.ceil((daysSinceStart + startOfYear.getDay() + 1) / 7));
+
+  let targetMs: number;
+  if (isLive) {
+    // End of Sunday 23:59:59
+    const daysUntilSunday = day === 0 ? 0 : 7 - day;
+    const end = new Date(now);
+    end.setDate(now.getDate() + daysUntilSunday);
+    end.setHours(23, 59, 59, 999);
+    targetMs = end.getTime();
+  } else {
+    // Next Friday 18:00:00
+    const daysUntilFriday = (5 - day + 7) % 7;
+    const start = new Date(now);
+    start.setDate(now.getDate() + daysUntilFriday);
+    start.setHours(18, 0, 0, 0);
+    targetMs = start.getTime();
+  }
+
+  const diffMs = Math.max(0, targetMs - now.getTime());
+  const totalMins = Math.floor(diffMs / 60_000);
+  const d = Math.floor(totalMins / (60 * 24));
+  const h = Math.floor((totalMins % (60 * 24)) / 60);
+  const m = totalMins % 60;
+
+  const countdownLabel = isLive
+    ? d > 0
+      ? `Ends in ${d}d ${h}h ${m}m`
+      : `Ends in ${h}h ${m}m`
+    : d > 0
+      ? `Starts in ${d}d ${h}h`
+      : `Starts in ${h}h ${m}m`;
+
+  return {
+    isLive,
+    weekNumber,
+    cupTitle: `Weekend Crown Mini-Cup #${weekNumber}`,
+    countdownLabel,
+    prizeCoins: 1500,
+    prizeGems: 8,
+    entryFee: 150,
+  };
+}
+

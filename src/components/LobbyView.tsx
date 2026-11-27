@@ -5,11 +5,13 @@ import {
   Crown,
   Gift,
   KeyRound,
+  LifeBuoy,
   PlusSquare,
   RefreshCw,
   Send,
   ShieldCheck,
   SlidersHorizontal,
+  Smartphone,
   Sparkles,
   Trophy,
   Users,
@@ -64,6 +66,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     inviteFriendToPlay,
     acceptRoomInvite,
     declineRoomInvite,
+    pendingDeepLinkRoomCode,
+    clearPendingDeepLinkRoom,
   } = useApp();
 
   const [mode, setMode] = useState<GameMode>('quick');
@@ -74,6 +78,15 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
 
   const [joinModalOpen, setJoinModalOpen] = useState(false);
   const [optionsModalOpen, setOptionsModalOpen] = useState(false);
+  const [passPlayModalOpen, setPassPlayModalOpen] = useState(false);
+  const [passPlayCount, setPassPlayCount] = useState<2 | 3 | 4>(4);
+  const [passPlayMode, setPassPlayMode] = useState<GameMode>('quick');
+  const [passPlayNames, setPassPlayNames] = useState<string[]>([
+    '',
+    'Player 2',
+    'Player 3',
+    'Player 4',
+  ]);
   const [joinCode, setJoinCode] = useState('');
 
   useEffect(() => {
@@ -143,8 +156,72 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     }
   };
 
+  const handleOpenPassPlay = () => {
+    setPassPlayNames((prev) => [
+      prev[0]?.trim() || profile.displayName || 'Player 1',
+      prev[1] || 'Player 2',
+      prev[2] || 'Player 3',
+      prev[3] || 'Player 4',
+    ]);
+    setPassPlayModalOpen(true);
+  };
+
+  const handleLaunchPassPlay = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanedNames = Array.from({ length: passPlayCount }, (_, idx) => {
+      const raw = (passPlayNames[idx] || '').trim().slice(0, 18);
+      return raw || (idx === 0 ? profile.displayName || 'Player 1' : `Player ${idx + 1}`);
+    });
+    setPassPlayModalOpen(false);
+    launchOfflinePractice({
+      mode: passPlayMode,
+      playerCount: passPlayCount === 2 ? 2 : 4,
+      difficulty: 'tactical',
+      passAndPlay: {
+        playerCount: passPlayCount,
+        playerNames: cleanedNames,
+      },
+    });
+  };
+
   return (
     <div className="max-w-[1040px] mx-auto px-4 sm:px-6 py-4 pb-8">
+      {/* Pending WhatsApp / Deep-Link Invite Banner for Guests */}
+      {!isSignedIn && pendingDeepLinkRoomCode && (
+        <div className="mb-4 rounded-3xl bg-gradient-to-r from-[#DBEAFE] via-[#E0F2FE] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3 animate-pop-in">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-[#1D4ED8] text-white border-2 border-[#111827] flex items-center justify-center shrink-0">
+              <KeyRound className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-display text-sm font-extrabold text-[#111827] truncate">
+                Table {pendingDeepLinkRoomCode} is waiting for you!
+              </div>
+              <div className="text-xs text-[#334155] font-semibold truncate">
+                Sign in with Google to jump straight into your friend&apos;s room.
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => signInWithGoogle()}
+              className="px-4 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-blue btn-gloss-sheen cursor-pointer"
+            >
+              Sign In &amp; Join
+            </button>
+            <button
+              type="button"
+              onClick={() => clearPendingDeepLinkRoom()}
+              className="p-1.5 rounded-xl bg-white border-2 border-[#111827] text-[#475569] hover:text-[#E11D48] cursor-pointer"
+              aria-label="Dismiss deep link invite"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Live Incoming Room Invite Banner right at the top of Home */}
       {incomingInvites.length > 0 && (
         <div className="mb-4 rounded-3xl bg-gradient-to-r from-[#FFF066] via-[#FDE047] to-[#FEF08A] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3 animate-pop-in animate-pulse-glow-gold">
@@ -341,25 +418,25 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             </div>
           </section>
 
-          {/* MORE WAYS TO PLAY: 3 Vibrant Illustrated Tactile Mode Cards */}
+          {/* MORE WAYS TO PLAY: 4 Vibrant Tactile Mode Cards (2x2 Grid) */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-lg font-extrabold text-[#111827]">
                 More ways to play
               </h2>
               <span className="px-2.5 py-0.5 rounded-full bg-white/90 border border-[#CBD5E1] text-[11px] font-display font-extrabold text-[#1D4ED8]">
-                3 modes
+                4 modes
               </span>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <button
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(4)}
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[132px]"
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFF2F5] via-[#FFE4EB] to-[#FFD1DF] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(225,29,72,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[126px]"
               >
-                <div className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#FF2E54] animate-badge-bob">
+                <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#FF2E54] animate-badge-bob">
                   <img
                     src={MODE_QUICK4P_IMAGE}
                     alt="Quick 4P"
@@ -372,8 +449,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-3">
-                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5">
+                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
                     {busyAction === 'quick4' ? 'Matching...' : 'Quick 4P'}
                   </div>
                   <div className="text-[11px] font-bold text-[#BE123C] mt-0.5">Fast online</div>
@@ -384,10 +461,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(2)}
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[132px]"
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#ECFFF6] via-[#D1FAE5] to-[#A7F3D0] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(16,185,129,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer disabled:opacity-60 flex flex-col justify-between min-h-[126px]"
               >
                 <div
-                  className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob"
+                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob"
                   style={{ animationDelay: '0.45s' }}
                 >
                   <img
@@ -402,11 +479,30 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-3">
-                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5">
+                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
                     {busyAction === 'duel2' ? 'Matching...' : '1v1 Duel'}
                   </div>
                   <div className="text-[11px] font-bold text-[#047857] mt-0.5">Head to head</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenPassPlay}
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[126px]"
+              >
+                <div
+                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] bg-gradient-to-b from-[#F59E0B] to-[#D97706] text-white flex items-center justify-center animate-badge-bob"
+                  style={{ animationDelay: '0.7s' }}
+                >
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <div className="mt-2.5">
+                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
+                    Pass &amp; Play
+                  </div>
+                  <div className="text-[11px] font-bold text-[#B45309] mt-0.5">Same phone · 2–4P</div>
                 </div>
               </button>
 
@@ -419,10 +515,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     difficulty: aiDifficulty,
                   })
                 }
-                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[132px]"
+                className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#EFF8FF] via-[#DBEAFE] to-[#BFDBFE] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(37,99,235,0.14)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[126px]"
               >
                 <div
-                  className="relative w-13 h-13 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#2563EB] animate-badge-bob"
+                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#2563EB] animate-badge-bob"
                   style={{ animationDelay: '0.9s' }}
                 >
                   <img
@@ -437,11 +533,11 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                     className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
                   />
                 </div>
-                <div className="mt-3">
-                  <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] leading-tight">
+                <div className="mt-2.5">
+                  <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
                     VS Computer
                   </div>
-                  <div className="text-[11px] font-bold text-[#1D4ED8] mt-0.5">Play offline</div>
+                  <div className="text-[11px] font-bold text-[#1D4ED8] mt-0.5">Play vs bots</div>
                 </div>
               </button>
             </div>
@@ -509,6 +605,36 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </span>
             </button>
           </section>
+
+          {/* Low-Coin Opt-In Rescue Refill (Appears only when balance < 200) */}
+          {wallet.coins < 200 && (
+            <section className="rounded-2xl bg-gradient-to-r from-[#FFF599] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827] px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-[#1D4ED8] text-white border-2 border-[#111827] flex items-center justify-center shrink-0">
+                  <LifeBuoy className="w-4 h-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] truncate">
+                    Low on Coins? Free +300 Refill
+                  </div>
+                  <div className="text-[11px] font-semibold text-[#475569] truncate">
+                    Optional short video · Keep playing online tables
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  triggerRewardedAd('low_coin_rescue', () => {
+                    showToast('+300 Rescue Coins credited!', 'success');
+                  })
+                }
+                className="px-3.5 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer shrink-0 whitespace-nowrap"
+              >
+                +300 Coins
+              </button>
+            </section>
+          )}
         </div>
 
         {/* RIGHT / SECONDARY COLUMN (5 cols on desktop): Friends online + Live Open Tables */}
@@ -871,6 +997,139 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             >
               Done
             </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* PASS & PLAY OFFLINE SETUP MODAL */}
+      {passPlayModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Pass and Play setup"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPassPlayModalOpen(false);
+            }}
+          >
+            <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-[#FACC15] to-[#F59E0B] border-2 border-[#111827] flex items-center justify-center text-[#111827]">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="font-display text-lg font-extrabold text-[#111827] leading-tight">
+                      Pass &amp; Play
+                    </h2>
+                    <p className="text-[11px] font-semibold text-[#64748B]">
+                      Same phone · 100% offline · Zero internet needed
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPassPlayModalOpen(false)}
+                  className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] hover:border-[#111827] cursor-pointer"
+                  aria-label="Close Pass and Play setup"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleLaunchPassPlay} className="space-y-4">
+                <div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">How many players?</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([2, 3, 4] as const).map((cnt) => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setPassPlayCount(cnt)}
+                        className={`py-2.5 rounded-xl font-display text-sm font-extrabold cursor-pointer ${
+                          passPlayCount === cnt
+                            ? 'game-btn-blue'
+                            : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                        }`}
+                      >
+                        {cnt} Players
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Rule set</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['quick', 'classic'] as GameMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setPassPlayMode(m)}
+                        className={`py-2 rounded-xl font-display text-xs font-extrabold capitalize cursor-pointer ${
+                          passPlayMode === m
+                            ? 'game-btn-gold'
+                            : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
+                        }`}
+                      >
+                        {m} rules
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="text-xs font-bold text-[#475569]">Player names</div>
+                  {Array.from({ length: passPlayCount }).map((_, idx) => {
+                    const colorSpec =
+                      passPlayCount === 2
+                        ? [
+                            { label: 'Red', hex: '#EC1C24' },
+                            { label: 'Yellow', hex: '#FACC15' },
+                          ][idx]
+                        : [
+                            { label: 'Red', hex: '#EC1C24' },
+                            { label: 'Green', hex: '#10B981' },
+                            { label: 'Yellow', hex: '#FACC15' },
+                            { label: 'Blue', hex: '#2563EB' },
+                          ][idx];
+
+                    return (
+                      <div key={`pp-${idx}`} className="flex items-center gap-2.5">
+                        <span
+                          className="w-7 h-7 rounded-full border-2 border-[#111827] shrink-0"
+                          style={{ backgroundColor: colorSpec.hex }}
+                          title={colorSpec.label}
+                        />
+                        <input
+                          type="text"
+                          maxLength={18}
+                          value={passPlayNames[idx] || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setPassPlayNames((prev) => {
+                              const next = [...prev];
+                              next[idx] = val;
+                              return next;
+                            });
+                          }}
+                          placeholder={`Player ${idx + 1} (${colorSpec.label})`}
+                          className="flex-1 px-3 py-2 rounded-xl bg-[#F8FAFC] border-2 border-[#CBD5E1] focus:border-[#111827] text-xs font-bold text-[#111827] focus:outline-none"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3 rounded-2xl font-display font-extrabold text-sm game-btn-gold btn-gloss-sheen cursor-pointer"
+                >
+                  Start {passPlayCount}P Pass &amp; Play
+                </button>
+              </form>
             </div>
           </div>,
           document.body

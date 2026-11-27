@@ -1,0 +1,27 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": ["firebase.json", "**/node_modules/**", "**/.git/**"],
+    "headers": [
+      {
+        "source": "/.well-known/assetlinks.json",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/join/**",
+        "destination": "/join/index.html"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

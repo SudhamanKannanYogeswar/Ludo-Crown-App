@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Award, Play, Plus, Ticket, Trophy } from 'lucide-react';
+import { Award, Clock, Crown, LifeBuoy, Play, Plus, Ticket, Trophy } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { BOT_ROSTER, LEAGUE_META } from '../data/catalog';
+import { BOT_ROSTER, getWeekendCupSchedule, LEAGUE_META } from '../data/catalog';
 import { LeagueTier, TournamentDoc } from '../types';
 import { PlayerAvatar } from './PlayerAvatar';
 
@@ -29,12 +29,60 @@ export function TournamentsView() {
   const [newTier, setNewTier] = useState<LeagueTier>('bronze');
   const [newSize, setNewSize] = useState<4 | 8>(4);
   const [creating, setCreating] = useState(false);
+  const [weekendCup, setWeekendCup] = useState(() => getWeekendCupSchedule());
+  const [joiningWeekendCup, setJoiningWeekendCup] = useState(false);
+
+  useEffect(() => {
+    const id = setInterval(() => setWeekendCup(getWeekendCupSchedule()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (isSignedIn) {
       refreshTournaments().catch(() => {});
     }
   }, [isSignedIn, refreshTournaments]);
+
+  const existingWeekendCup = tournaments.find((t) => t.title === weekendCup.cupTitle) || null;
+
+  const handleWeekendCupAction = async () => {
+    if (!weekendCup.isLive) {
+      // Weekday qualifier warm-up match
+      launchOfflinePractice({
+        mode: 'quick',
+        playerCount: 2,
+        difficulty: 'tactical',
+        tournamentContext: {
+          tournamentId: `weekend_qualifier_${weekendCup.weekNumber}`,
+          tournamentTitle: `${weekendCup.cupTitle} Qualifier`,
+          round: 'semifinal',
+          prizePool: 400,
+          opponentName: BOT_ROSTER[0].name,
+        },
+      });
+      return;
+    }
+    if (!isSignedIn) {
+      await signInWithGoogle();
+      return;
+    }
+    setJoiningWeekendCup(true);
+    try {
+      if (existingWeekendCup) {
+        setSelectedTournamentId(existingWeekendCup.id);
+        if (existingWeekendCup.entrantUids.includes(profile.uid)) {
+          handlePlayBracketMatch(existingWeekendCup, 'semifinal');
+        } else {
+          const useTicket = wallet.freeTournamentTickets > 0;
+          await registerForTournament(existingWeekendCup, useTicket);
+        }
+      } else {
+        await hostNewTournament(weekendCup.cupTitle, 'gold', 8);
+      }
+    } finally {
+      setJoiningWeekendCup(false);
+    }
+  };
 
   const filtered =
     selectedTier === 'all' ? tournaments : tournaments.filter((t) => t.tier === selectedTier);
@@ -115,6 +163,77 @@ export function TournamentsView() {
           </button>
         </div>
       </div>
+
+      {/* Timed Weekend Crown Mini-Cup Featured Banner */}
+      <section className="rounded-3xl bg-gradient-to-r from-[#FFF599] via-[#FDE047] to-[#DBEAFE] border-2 border-[#111827] shadow-[0_5px_0_#111827] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start gap-3.5 min-w-0">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-b from-[#FF5E7E] to-[#E11D48] border-2 border-[#111827] shadow-[0_3px_0_#111827] flex items-center justify-center text-white shrink-0">
+            <Crown className="w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#111827] text-[10px] font-display font-black ${
+                  weekendCup.isLive
+                    ? 'bg-[#10B981] text-white'
+                    : 'bg-white text-[#1D4ED8]'
+                }`}
+              >
+                <Clock className="w-3 h-3" />
+                {weekendCup.isLive ? 'LIVE WEEKEND CUP' : 'WEEKEND MINI-CUP'}
+              </span>
+              <span className="font-mono text-xs font-extrabold text-[#111827]">
+                {weekendCup.countdownLabel}
+              </span>
+            </div>
+            <h2 className="font-display text-lg sm:text-xl font-black text-[#111827] mt-1 truncate">
+              {weekendCup.cupTitle}
+            </h2>
+            <p className="text-xs font-semibold text-[#334155] mt-0.5">
+              Prize Pool: {weekendCup.prizeCoins.toLocaleString()} Coins + {weekendCup.prizeGems} Gems · Fri 6PM – Sun Midnight
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={joiningWeekendCup}
+          onClick={handleWeekendCupAction}
+          className="px-5 py-3 rounded-2xl font-display font-extrabold text-xs sm:text-sm game-btn-blue btn-gloss-sheen inline-flex items-center justify-center gap-2 cursor-pointer shrink-0 disabled:opacity-60"
+        >
+          <Trophy className="w-4 h-4" />
+          <span>
+            {joiningWeekendCup
+              ? 'Opening...'
+              : weekendCup.isLive
+                ? existingWeekendCup?.entrantUids.includes(profile.uid)
+                  ? 'Play Mini-Cup'
+                  : 'Enter Weekend Cup'
+                : 'Play Qualifier Warm-Up'}
+          </span>
+        </button>
+      </section>
+
+      {/* Low-Coin Opt-In Rescue Strip */}
+      {wallet.coins < 200 && (
+        <div className="rounded-2xl bg-[#FEF9C3] border-2 border-[#111827] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 text-xs font-bold text-[#111827]">
+            <LifeBuoy className="w-4 h-4 text-[#1D4ED8] shrink-0" />
+            <span>Running low on coins for Cup entry? Watch an opt-in video for +300 Rescue Coins.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              triggerRewardedAd('low_coin_rescue', () => {
+                showToast('+300 Rescue Coins credited!', 'success');
+              })
+            }
+            className="px-3.5 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-gold cursor-pointer whitespace-nowrap"
+          >
+            +300 Free Coins
+          </button>
+        </div>
+      )}
 
       {/* League Tier Selector Tiles */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

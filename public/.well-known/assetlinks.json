@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.ludocrown.game",
+      "sha256_cert_fingerprints": [
+        "REPLACE_WITH_YOUR_PLAY_CONSOLE_AND_KEYSTORE_SHA256_FINGERPRINTS"
+      ]
+    }
+  }
+]

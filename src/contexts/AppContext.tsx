@@ -12,12 +12,27 @@ import {
   ADMOB_CONFIG,
   hasNativeAndroidAdBridge,
   initNativeAdMob,
+  isTestAdUnitId,
   REWARDED_PLACEMENTS,
   RewardedPlacementId,
   showNativeInterstitialAd,
   showNativeRewardedAd,
   syncNativeBannerVisibility,
 } from '../services/adMobService';
+import {
+  getNotificationPermissionState,
+  getStoredFcmToken,
+  loadNotificationPrefs,
+  markDailyResetAlertShown,
+  NotificationPermissionState,
+  NotificationPreferences,
+  registerForPushNotifications,
+  saveNotificationPrefsLocal,
+  shouldTriggerDailyResetAlert,
+  showDeviceNotificationAlert,
+  syncPushIfAlreadyGranted,
+} from '../services/pushNotificationService';
+import { listenForIncomingDeepLinks } from '../services/shareService';
 import {
   acceptFriendRequestDoc,
   completeTournamentDoc,
@@ -35,6 +50,7 @@ import {
   listOpenPublicRooms,
   removeFriendshipDoc,
   respondToRoomInviteDoc,
+  savePushSubscriptionDoc,
   sendFriendRequestDoc,
   sendRoomInviteDoc,
   sendRoomMessage,
@@ -83,6 +99,10 @@ export interface OfflineMatchConfig {
   mode: GameMode;
   playerCount: 2 | 4;
   difficulty: AiDifficulty;
+  passAndPlay?: {
+    playerCount: 2 | 3 | 4;
+    playerNames: string[];
+  };
   tournamentContext?: {
     tournamentId: string;
     tournamentTitle: string;
@@ -144,6 +164,9 @@ interface AppContextValue {
   }) => Promise<void>;
   sendChat: (text: string, kind: 'chat' | 'emote') => Promise<void>;
   exitActiveRoom: () => Promise<void>;
+  rematchOnlineRoom: (finishedRoom: RoomDoc) => Promise<void>;
+  pendingDeepLinkRoomCode: string | null;
+  clearPendingDeepLinkRoom: () => void;
   // Offline Practice & Tournament Matches
   offlineMatch: OfflineMatchConfig | null;
   launchOfflinePractice: (config: OfflineMatchConfig) => void;
@@ -164,6 +187,14 @@ interface AppContextValue {
   inviteFriendToPlay: (friendUid: string, friendName: string) => Promise<void>;
   acceptRoomInvite: (invite: RoomInviteDoc) => Promise<void>;
   declineRoomInvite: (inviteId: string) => Promise<void>;
+  // Push Notifications (FCM / Web Opt-In)
+  notificationPrefs: NotificationPreferences;
+  notificationPermission: NotificationPermissionState;
+  enablePushNotifications: () => Promise<boolean>;
+  updateNotificationPref: (
+    key: keyof Omit<NotificationPreferences, 'enabled'>,
+    value: boolean
+  ) => Promise<void>;
   // AdMob Placements
   adModal: ActiveAdModalState | null;
   triggerRewardedAd: (placementId: RewardedPlacementId, onRewardEarned: () => void) => void;
@@ -223,12 +254,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [roomMessages, setRoomMessages] = useState<ChatMessageDoc[]>([]);
   const [openRooms, setOpenRooms] = useState<RoomDoc[]>([]);
   const [offlineMatch, setOfflineMatch] = useState<OfflineMatchConfig | null>(null);
+  const [pendingDeepLinkRoomCode, setPendingDeepLinkRoomCode] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('ludo_crown_pending_join_code') || null;
+    } catch {
+      return null;
+    }
+  });
 
   const [leaderboard, setLeaderboard] = useState<PlayerProfile[]>([]);
   const [tournaments, setTournaments] = useState<TournamentDoc[]>([]);
   const [friendships, setFriendships] = useState<FriendshipDoc[]>([]);
   const [incomingInvites, setIncomingInvites] = useState<RoomInviteDoc[]>([]);
   const seenInviteIdsRef = React.useRef<Set<string>>(new Set());
+  const seenFriendStatusRef = React.useRef<Map<string, string>>(new Map());
+  const friendsInitializedRef = React.useRef<boolean>(false);
+
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(() =>
+    loadNotificationPrefs()
+  );
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermissionState>('prompt');
+  const notifPrefsRef = React.useRef<NotificationPreferences>(notificationPrefs);
+  notifPrefsRef.current = notificationPrefs;
 
   const [adModal, setAdModal] = useState<ActiveAdModalState | null>(null);
   const [matchesSinceLastInterstitial, setMatchesSinceLastInterstitial] = useState(0);
@@ -304,7 +352,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       setWallet(w);
     });
+    friendsInitializedRef.current = false;
+    seenFriendStatusRef.current.clear();
+
     const unsubFriends = subscribeFriendships(user.uid, (items) => {
+      if (!friendsInitializedRef.current) {
+        friendsInitializedRef.current = true;
+        items.forEach((f) => seenFriendStatusRef.current.set(f.id, f.status));
+      } else {
+        for (const f of items) {
+          const prevStatus = seenFriendStatusRef.current.get(f.id);
+          if (!prevStatus && f.status === 'pending' && f.recipientUid === user.uid) {
+            tabletopAudio.playSafeStar();
+            showToast(`${f.requesterName} sent you a friend request!`, 'info');
+            if (notifPrefsRef.current.enabled && notifPrefsRef.current.friendRequests) {
+              showDeviceNotificationAlert(
+                'New Friend Request · Ludo Crown',
+                `${f.requesterName} wants to add you as a friend.`,
+                `friend-req-${f.id}`
+              );
+            }
+          } else if (
+            prevStatus === 'pending' &&
+            f.status === 'accepted' &&
+            f.requesterUid === user.uid
+          ) {
+            tabletopAudio.playSafeStar();
+            showToast(`${f.recipientName} accepted your friend request!`, 'success');
+            if (notifPrefsRef.current.enabled && notifPrefsRef.current.friendRequests) {
+              showDeviceNotificationAlert(
+                'Friend Request Accepted!',
+                `${f.recipientName} joined your Ludo Crown squad.`,
+                `friend-acc-${f.id}`
+              );
+            }
+          }
+          seenFriendStatusRef.current.set(f.id, f.status);
+        }
+      }
       setFriendships(items);
     });
     const unsubInvites = subscribeIncomingRoomInvites(user.uid, (invites) => {
@@ -315,6 +400,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (Date.now() - inv.createdAtMs < 20000) {
             tabletopAudio.playSafeStar();
             showToast(`${inv.fromName} invited you to table ${inv.roomCode}!`, 'info');
+            if (notifPrefsRef.current.enabled && notifPrefsRef.current.roomInvites) {
+              showDeviceNotificationAlert(
+                'Table Invite · Ludo Crown',
+                `${inv.fromName} invited you to table ${inv.roomCode}!`,
+                `room-invite-${inv.id}`
+              );
+            }
           }
         }
       }
@@ -360,10 +452,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [user, activeRoom?.id, activeRoom?.visibility]);
 
-  // Warm up native AdMob SDK once on mount
+  // Warm up native AdMob SDK & inspect notification permission once on mount
   useEffect(() => {
     initNativeAdMob();
+    getNotificationPermissionState()
+      .then((perm) => setNotificationPermission(perm))
+      .catch(() => {});
   }, []);
+
+  // Automatically create Android FCM channel & refresh token when permission is already granted
+  useEffect(() => {
+    syncPushIfAlreadyGranted({
+      onToken: (token, platform) => {
+        if (user) {
+          savePushSubscriptionDoc(user.uid, {
+            token,
+            platform,
+            enabled: true,
+            roomInvites: notifPrefsRef.current.roomInvites,
+            friendRequests: notifPrefsRef.current.friendRequests,
+            dailyRewards: notifPrefsRef.current.dailyRewards,
+          }).catch(() => {});
+        }
+      },
+      onForegroundMessage: (title, body) => {
+        tabletopAudio.playSafeStar();
+        showToast(`${title}: ${body}`, 'info');
+      },
+      onNotificationTap: (targetTab) => {
+        setActiveTab(targetTab);
+      },
+    }).catch(() => {});
+  }, [user, showToast]);
+
+  // Once-per-day alert when Daily Gift / Free Lucky Spin has reset (opt-in only)
+  useEffect(() => {
+    const today = getTodayDateString();
+    if (
+      notificationPrefs.enabled &&
+      notificationPrefs.dailyRewards &&
+      wallet.lastDailyClaimDate !== today &&
+      shouldTriggerDailyResetAlert(today)
+    ) {
+      markDailyResetAlertShown(today);
+      showDeviceNotificationAlert(
+        'Daily Gift & Lucky Spin Ready!',
+        'Claim your 7-Day Streak bonus and spin the Lucky Wheel in Ludo Crown.',
+        `daily-reset-${today}`
+      );
+    }
+  }, [notificationPrefs.enabled, notificationPrefs.dailyRewards, wallet.lastDailyClaimDate]);
 
   // Policy-compliant Adaptive Banner visibility:
   // Shown ONLY on non-gameplay screens (Home, Cups, Rank, Rewards, Shop, and Online Waiting Room).
@@ -496,12 +634,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const nextStreak = (wallet.dailyStreak % 7) + 1;
     const reward = DAILY_STREAK_REWARDS[nextStreak - 1];
+
+    let unlockedCosmetics = wallet.unlockedCosmetics;
+    let bonusGems = 0;
+    let extraNote = '';
+
+    if (nextStreak === 7 && reward.cosmeticId) {
+      if (!unlockedCosmetics.includes(reward.cosmeticId)) {
+        unlockedCosmetics = [...unlockedCosmetics, reward.cosmeticId];
+        extraNote = ` + Unlocked ${reward.cosmeticLabel || 'Golden Crown Dice'}!`;
+      } else if (
+        reward.fallbackCosmeticId &&
+        !unlockedCosmetics.includes(reward.fallbackCosmeticId)
+      ) {
+        unlockedCosmetics = [...unlockedCosmetics, reward.fallbackCosmeticId];
+        extraNote = ' + Unlocked Crystal Pearl Board!';
+      } else {
+        bonusGems = 25;
+        extraNote = ' + 25 Bonus Gems!';
+      }
+    }
+
     const nextWallet: UserWallet = {
       ...wallet,
       coins: wallet.coins + reward.coins,
-      gems: wallet.gems + reward.gems,
+      gems: wallet.gems + reward.gems + bonusGems,
       dailyStreak: nextStreak,
       lastDailyClaimDate: today,
+      unlockedCosmetics,
     };
     setWallet(nextWallet);
     tabletopAudio.playCoinReward();
@@ -514,9 +674,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         dailyChallengesDate: nextWallet.dailyChallengesDate,
         challengeProgress: nextWallet.challengeProgress,
         claimedChallenges: nextWallet.claimedChallenges,
+        ...(unlockedCosmetics !== wallet.unlockedCosmetics ? { unlockedCosmetics } : {}),
       });
     }
-    showToast(`Day ${nextStreak} reward claimed: ${reward.label}!`, 'success');
+    showToast(
+      extraNote
+        ? `Day 7 Grand Reward! +${reward.coins} Coins, +${reward.gems} Gems${extraNote}`
+        : `Day ${nextStreak} reward claimed: ${reward.label}!`,
+      'success'
+    );
     return true;
   }, [wallet, user, showToast]);
 
@@ -738,6 +904,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [user, profile, showToast]
   );
 
+  const clearPendingDeepLinkRoom = useCallback(() => {
+    setPendingDeepLinkRoomCode(null);
+    try {
+      sessionStorage.removeItem('ludo_crown_pending_join_code');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Capture incoming WhatsApp / native deep links (/join/ROOMCODE or ludocrown://join/ROOMCODE)
+  useEffect(() => {
+    return listenForIncomingDeepLinks((code) => {
+      setPendingDeepLinkRoomCode(code);
+      try {
+        sessionStorage.setItem('ludo_crown_pending_join_code', code);
+      } catch {
+        // ignore
+      }
+    });
+  }, []);
+
+  // Auto-join pending deep-link table once auth is ready (or prompt sign-in if guest)
+  useEffect(() => {
+    if (!authReady || !pendingDeepLinkRoomCode) return;
+    if (!user) {
+      showToast(`Sign in with Google to jump straight into table ${pendingDeepLinkRoomCode}!`, 'info');
+      return;
+    }
+    if (profile.uid !== user.uid) return;
+    const codeToJoin = pendingDeepLinkRoomCode;
+    clearPendingDeepLinkRoom();
+    joinRoom(codeToJoin).catch(() => {});
+  }, [authReady, user, profile.uid, pendingDeepLinkRoomCode, clearPendingDeepLinkRoom, joinRoom, showToast]);
+
   const hostStartRoom = useCallback(
     async (fillBots: boolean) => {
       if (!activeRoom || !user) return;
@@ -789,6 +989,95 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setRoomMessages([]);
     setActiveTab('lobby');
   }, [activeRoom, user, profile.displayName]);
+
+  const rematchOnlineRoom = useCallback(
+    async (finishedRoom: RoomDoc) => {
+      if (!user) {
+        showToast('Sign in with Google to start an online rematch.', 'info');
+        return;
+      }
+      try {
+        if (finishedRoom.visibility === 'public') {
+          const code = await findOrCreateQuickMatch(profile, {
+            mode: finishedRoom.mode,
+            maxPlayers: finishedRoom.maxPlayers,
+            entryStake: finishedRoom.entryStake,
+          });
+          setOfflineMatch(null);
+          setActiveRoomId(code);
+          setActiveTab('play');
+          showToast(`Rematch table ${code} ready!`, 'success');
+          return;
+        }
+
+        const code = await createMultiplayerRoom(profile, {
+          visibility: 'private',
+          mode: finishedRoom.mode,
+          maxPlayers: finishedRoom.maxPlayers,
+          entryStake: finishedRoom.entryStake,
+        });
+        const freshRoom: RoomDoc = {
+          id: code,
+          roomCode: code,
+          hostUid: profile.uid,
+          visibility: 'private',
+          mode: finishedRoom.mode,
+          maxPlayers: finishedRoom.maxPlayers,
+          entryStake: finishedRoom.entryStake,
+          status: 'waiting',
+          openPublic: false,
+          playerUids: [profile.uid],
+          seats: [
+            {
+              uid: profile.uid,
+              name: profile.displayName,
+              avatarId: profile.avatarId,
+              avatarFrame: profile.avatarFrame,
+              color: 'red',
+              isBot: false,
+              elo: profile.elo,
+            },
+          ],
+          tokens: {
+            red: [-1, -1, -1, -1],
+            green: [-1, -1, -1, -1],
+            yellow: [-1, -1, -1, -1],
+            blue: [-1, -1, -1, -1],
+          },
+          turnIndex: 0,
+          diceValue: 0,
+          turnPhase: 'roll',
+          consecutiveSixes: 0,
+          winnerColor: '',
+          winnerUid: '',
+          lastActionText: '',
+          turnCount: 0,
+        };
+
+        setOfflineMatch(null);
+        setActiveRoomId(code);
+        setActiveTab('play');
+
+        const otherHumans = finishedRoom.seats.filter(
+          (s) => !s.isBot && s.uid !== profile.uid
+        );
+        if (otherHumans.length > 0) {
+          await Promise.allSettled(
+            otherHumans.map((seat) => sendRoomInviteDoc(freshRoom, profile, seat.uid))
+          );
+          showToast(
+            `Rematch table ${code} open! Invited ${otherHumans.length} friend${otherHumans.length > 1 ? 's' : ''}.`,
+            'success'
+          );
+        } else {
+          showToast(`Fresh rematch table ${code} created!`, 'success');
+        }
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Unable to create rematch table.', 'error');
+      }
+    },
+    [user, profile, showToast]
+  );
 
   const launchOfflinePractice = useCallback((config: OfflineMatchConfig) => {
     setActiveRoomId(null);
@@ -1001,6 +1290,77 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   // =========================================================================
+  // PUSH NOTIFICATIONS (FCM + WEB OPT-IN)
+  // =========================================================================
+
+  const enablePushNotifications = useCallback(async (): Promise<boolean> => {
+    const nextPrefs: NotificationPreferences = {
+      ...notificationPrefs,
+      enabled: true,
+    };
+    const res = await registerForPushNotifications({
+      onToken: (token, platform) => {
+        if (user) {
+          savePushSubscriptionDoc(user.uid, {
+            token,
+            platform,
+            enabled: true,
+            roomInvites: notifPrefsRef.current.roomInvites,
+            friendRequests: notifPrefsRef.current.friendRequests,
+            dailyRewards: notifPrefsRef.current.dailyRewards,
+          }).catch(() => {});
+        }
+      },
+      onForegroundMessage: (title, body) => {
+        tabletopAudio.playSafeStar();
+        showToast(`${title}: ${body}`, 'info');
+      },
+      onNotificationTap: (targetTab) => {
+        setActiveTab(targetTab);
+      },
+    });
+
+    if (res.granted) {
+      setNotificationPermission('granted');
+      setNotificationPrefs(nextPrefs);
+      saveNotificationPrefsLocal(nextPrefs);
+      if (user) {
+        savePushSubscriptionDoc(user.uid, {
+          token: res.token || getStoredFcmToken() || 'web_browser_opt_in',
+          platform: isCapacitorNativeApp() ? 'android' : 'web',
+          ...nextPrefs,
+        }).catch(() => {});
+      }
+      showToast('Push notifications enabled for invites, friends & daily gifts!', 'success');
+      return true;
+    }
+
+    const refreshedPerm = await getNotificationPermissionState();
+    setNotificationPermission(refreshedPerm);
+    showToast(res.reason || 'Notifications were not enabled.', 'info');
+    return false;
+  }, [notificationPrefs, user, showToast]);
+
+  const updateNotificationPref = useCallback(
+    async (key: keyof Omit<NotificationPreferences, 'enabled'>, value: boolean) => {
+      const next: NotificationPreferences = {
+        ...notificationPrefs,
+        [key]: value,
+      };
+      setNotificationPrefs(next);
+      saveNotificationPrefsLocal(next);
+      if (user && next.enabled) {
+        await savePushSubscriptionDoc(user.uid, {
+          token: getStoredFcmToken() || 'web_browser_opt_in',
+          platform: isCapacitorNativeApp() ? 'android' : 'web',
+          ...next,
+        }).catch(() => {});
+      }
+    },
+    [notificationPrefs, user]
+  );
+
+  // =========================================================================
   // ANDROID ADMOB & REWARDED VIDEO PLACEMENTS
   // =========================================================================
 
@@ -1047,7 +1407,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const spec = REWARDED_PLACEMENTS[placementId];
-      const bonusCoins = placementId === 'daily_bonus_coins' ? 250 : 0;
+      const bonusCoins =
+        placementId === 'low_coin_rescue'
+          ? 300
+          : placementId === 'daily_bonus_coins'
+            ? 250
+            : 0;
       const bonusGems = placementId === 'bonus_gems' ? 5 : 0;
       const bonusTickets = placementId === 'free_tournament_ticket' ? 1 : 0;
 
@@ -1112,6 +1477,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const maybeShowInterstitialAfterMatch = useCallback(() => {
+    // Player-first monetization: keep ads strictly opt-in rewarded early on unless
+    // a dedicated production interstitial unit ID is explicitly configured.
+    if (isTestAdUnitId(ADMOB_CONFIG.interstitialUnitId)) {
+      return;
+    }
     const now = Date.now();
     if (matchesSinceLastInterstitial < ADMOB_CONFIG.interstitialEveryNMatches) {
       return;
@@ -1125,16 +1495,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showNativeInterstitialAd().catch(() => {});
       return;
     }
-    setAdModal({
-      kind: 'interstitial',
-      placementId: 'post_match_break',
-      title: 'Match Break Interstitial',
-      rewardLabel: 'Frequency-capped (1 per 3 matches · 90s min gap)',
-      unitId: ADMOB_CONFIG.interstitialUnitId,
-      durationSeconds: 3,
-      onComplete: () => setAdModal(null),
-      onDismiss: () => setAdModal(null),
-    });
   }, [matchesSinceLastInterstitial]);
 
   const value = useMemo<AppContextValue>(
@@ -1168,6 +1528,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       submitMultiplayerTurn,
       sendChat,
       exitActiveRoom,
+      rematchOnlineRoom,
+      pendingDeepLinkRoomCode,
+      clearPendingDeepLinkRoom,
       offlineMatch,
       launchOfflinePractice,
       closeOfflineMatch,
@@ -1185,6 +1548,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       inviteFriendToPlay,
       acceptRoomInvite,
       declineRoomInvite,
+      notificationPrefs,
+      notificationPermission,
+      enablePushNotifications,
+      updateNotificationPref,
       adModal,
       triggerRewardedAd,
       maybeShowInterstitialAfterMatch,
@@ -1221,6 +1588,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       submitMultiplayerTurn,
       sendChat,
       exitActiveRoom,
+      rematchOnlineRoom,
+      pendingDeepLinkRoomCode,
+      clearPendingDeepLinkRoom,
       offlineMatch,
       launchOfflinePractice,
       closeOfflineMatch,
@@ -1238,6 +1608,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       inviteFriendToPlay,
       acceptRoomInvite,
       declineRoomInvite,
+      notificationPrefs,
+      notificationPermission,
+      enablePushNotifications,
+      updateNotificationPref,
       adModal,
       triggerRewardedAd,
       maybeShowInterstitialAfterMatch,

@@ -264,6 +264,25 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidPushSubscription(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'token', 'platform', 'enabled', 'roomInvites', 'friendRequests', 'dailyRewards', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'token', 'platform', 'enabled', 'roomInvites', 'friendRequests', 'dailyRewards', 'updatedAt'
+        ]) &&
+        data.uid == userId &&
+        data.uid == request.auth.uid &&
+        isValidId(data.uid) &&
+        isBoundedString(data.token, 0, 512) &&
+        data.platform in ['android', 'ios', 'web'] &&
+        data.enabled is bool &&
+        data.roomInvites is bool &&
+        data.friendRequests is bool &&
+        data.dailyRewards is bool &&
+        data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // 1. Public Gaming Profiles & Leaderboard (/profiles/{userId})
     // =========================================================================
@@ -329,9 +348,9 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'coins', 'gems', 'unlockedCosmetics', 'freeTournamentTickets', 'updatedAt'
           ]) ||
-          // Action 2: Daily Streak & Challenge Progress / Claims
+          // Action 2: Daily Streak (incl. Day-7 Cosmetic Unlock) & Challenge Progress / Claims
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'coins', 'gems', 'dailyStreak', 'lastDailyClaimDate',
+            'coins', 'gems', 'unlockedCosmetics', 'dailyStreak', 'lastDailyClaimDate',
             'dailyChallengesDate', 'challengeProgress', 'claimedChallenges', 'updatedAt'
           ]) ||
           // Action 3: Rewarded Video Ad Credit & Daily Quota
@@ -588,6 +607,32 @@ service cloud.firestore {
       allow delete: if isVerified() &&
         isValidId(inviteId) &&
         (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid);
+    }
+
+    // =========================================================================
+    // 7. Private Push Notification Subscriptions (/pushSubscriptions/{userId})
+    // =========================================================================
+    match /pushSubscriptions/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      allow list: if false;
+
+      allow create: if isVerified() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidPushSubscription(incoming(), userId) &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerified() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidPushSubscription(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().updatedAt == request.time;
+
+      allow delete: if isVerified() &&
+        isValidId(userId) &&
+        request.auth.uid == userId;
     }
   }
 }

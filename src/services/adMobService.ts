@@ -7,6 +7,7 @@ export type RewardedPlacementId =
   | 'bonus_gems'
   | 'bonus_wheel_spin'
   | 'free_tournament_ticket'
+  | 'low_coin_rescue'
   | 'tactical_reroll';
 
 export type MobilePlatform = 'android' | 'ios' | 'web';
@@ -160,6 +161,11 @@ export const REWARDED_PLACEMENTS: Record<
   free_tournament_ticket: {
     title: 'Sponsored League Entry',
     rewardLabel: '+1 Free Tournament Ticket',
+    durationSeconds: 5,
+  },
+  low_coin_rescue: {
+    title: 'Treasury Coin Rescue',
+    rewardLabel: '+300 Rescue Coins',
     durationSeconds: 5,
   },
   tactical_reroll: {

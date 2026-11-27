@@ -328,10 +328,11 @@ function configureAndroid() {
 
   let xml = fs.readFileSync(manifestPath, 'utf8');
 
-  // Ensure internet, network state, and Android 13+ Advertising ID permissions
+  // Ensure internet, network state, Android 13+ Advertising ID, and Android 13+ Push Notification permissions
   xml = ensurePermission(xml, 'android.permission.INTERNET');
   xml = ensurePermission(xml, 'android.permission.ACCESS_NETWORK_STATE');
   xml = ensurePermission(xml, 'com.google.android.gms.permission.AD_ID');
+  xml = ensurePermission(xml, 'android.permission.POST_NOTIFICATIONS');
 
   // Inject or update Google AdMob APPLICATION_ID meta-data inside <application>
   const metaTag = `        <meta-data\n            android:name="com.google.android.gms.ads.APPLICATION_ID"\n            android:value="${ANDROID_APP_ID}" />`;
@@ -342,6 +343,39 @@ function configureAndroid() {
     );
   } else {
     xml = xml.replace('</application>', `${metaTag}\n    </application>`);
+  }
+
+  // Inject Firebase Cloud Messaging default notification icon, accent color, & high-priority channel ID
+  if (!xml.includes('com.google.firebase.messaging.default_notification_icon')) {
+    const fcmIconMeta = `        <meta-data\n            android:name="com.google.firebase.messaging.default_notification_icon"\n            android:resource="@mipmap/ic_launcher_round" />\n        <meta-data\n            android:name="com.google.firebase.messaging.default_notification_color"\n            android:resource="@color/ic_launcher_background" />`;
+    xml = xml.replace('</application>', `${fcmIconMeta}\n    </application>`);
+  }
+  if (!xml.includes('com.google.firebase.messaging.default_notification_channel_id')) {
+    const fcmChannelMeta = `        <meta-data\n            android:name="com.google.firebase.messaging.default_notification_channel_id"\n            android:value="ludo_crown_alerts" />`;
+    xml = xml.replace('</application>', `${fcmChannelMeta}\n    </application>`);
+  }
+
+  // Inject Android App Links (HTTPS) + Custom URI Scheme (ludocrown://) intent filters on MainActivity
+  const deepLinkHost = (process.env.DEEP_LINK_HOST || 'gen-lang-client-0829075952.web.app').trim();
+  if (!xml.includes('android:scheme="ludocrown"')) {
+    const deepLinkFilters = `
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${deepLinkHost}" android:pathPrefix="/join" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ludocrown" />
+            </intent-filter>
+        </activity>`;
+    xml = xml.replace('</activity>', deepLinkFilters);
+    console.log(
+      `Injected Android deep-link intent filters (https://${deepLinkHost}/join & ludocrown://)`
+    );
   }
 
   fs.writeFileSync(manifestPath, xml, 'utf8');
