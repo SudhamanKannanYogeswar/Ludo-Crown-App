@@ -4,14 +4,23 @@ import { useApp } from '../contexts/AppContext';
 import {
   AVATAR_FRAMES,
   AVATAR_OPTIONS,
+  BACKDROP_THEMES,
   BOARD_THEMES,
   DICE_THEMES,
 } from '../data/catalog';
 import { PlayerAvatar } from './PlayerAvatar';
 
 export function AtelierView() {
-  const { profile, wallet, saveCustomization, purchaseCosmetic, triggerRewardedAd, showToast } =
-    useApp();
+  const {
+    profile,
+    wallet,
+    backdropThemeId,
+    setBackdropThemeId,
+    saveCustomization,
+    purchaseCosmetic,
+    triggerRewardedAd,
+    showToast,
+  } = useApp();
 
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [avatarId, setAvatarId] = useState(profile.avatarId);
@@ -166,7 +175,12 @@ export function AtelierView() {
 
       {/* Board Skins */}
       <section className="space-y-3">
-        <h2 className="font-display text-lg font-extrabold text-[#111827]">Board Editions</h2>
+        <div>
+          <h2 className="font-display text-lg font-extrabold text-[#111827]">Board Editions</h2>
+          <p className="text-xs text-[#64748B]">
+            Transforms your Ludo board&apos;s outer frame, track tile finish, safe stars, and center crown.
+          </p>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
           {BOARD_THEMES.map((item) => {
             const owned = isOwned(item.id, item.priceCoins);
@@ -181,14 +195,45 @@ export function AtelierView() {
                 }`}
               >
                 <div>
+                  {/* Mini Ludo Board Visual Preview */}
                   <div
-                    className="h-14 rounded-xl border-2 border-[#111827] mb-3 flex items-center justify-center"
-                    style={{ backgroundColor: item.frameBg }}
+                    className="h-20 rounded-2xl p-1.5 border-2 border-[#111827] mb-3 shadow-xs"
+                    style={{ background: item.outerBezelGradient }}
                   >
                     <div
-                      className="w-14 h-7 rounded border"
-                      style={{ backgroundColor: item.tileBg, borderColor: item.tileBorder }}
-                    />
+                      className="w-full h-full rounded-xl p-[2px] flex items-center justify-center"
+                      style={{ backgroundColor: item.frameBg }}
+                    >
+                      <div
+                        className="w-full h-full rounded-[8px] grid grid-cols-3 grid-rows-3 overflow-hidden border"
+                        style={{ backgroundColor: item.tileBg, borderColor: item.tileBorder }}
+                      >
+                        <div className="bg-[#EC1C24] p-1">
+                          <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: item.yardInnerBg }} />
+                        </div>
+                        <div className="flex items-center justify-center" style={{ backgroundColor: item.safeBg }}>
+                          <span className="text-[10px]" style={{ color: item.starFill }}>★</span>
+                        </div>
+                        <div className="bg-[#00A844] p-1">
+                          <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: item.yardInnerBg }} />
+                        </div>
+                        <div className="border-y" style={{ borderColor: item.tileBorder }} />
+                        <div
+                          className="flex items-center justify-center"
+                          style={{ background: `linear-gradient(135deg, ${item.centerGradientStart}, ${item.centerBg})` }}
+                        >
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#FFE047]" />
+                        </div>
+                        <div className="border-y" style={{ borderColor: item.tileBorder }} />
+                        <div className="bg-[#0095EB] p-1">
+                          <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: item.yardInnerBg }} />
+                        </div>
+                        <div className="flex items-center justify-center" style={{ backgroundColor: item.tileBg }} />
+                        <div className="bg-[#FFD014] p-1">
+                          <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: item.yardInnerBg }} />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   <div className="font-display text-sm font-extrabold text-[#111827]">{item.name}</div>
                   <p className="mt-0.5 text-[11px] text-[#64748B] leading-snug">{item.description}</p>
@@ -220,6 +265,88 @@ export function AtelierView() {
                   )}
                 </button>
               </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Free Ambient Arena Backdrops */}
+      <section className="space-y-3">
+        <div>
+          <h2 className="font-display text-lg font-extrabold text-[#111827]">
+            Arena Backdrops (Free)
+          </h2>
+          <p className="text-xs text-[#64748B]">
+            Switch the subtle colorful atmosphere behind the board — animated dice &amp; stars stay active on every theme.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {BACKDROP_THEMES.map((bg) => {
+            const active = backdropThemeId === bg.id;
+            return (
+              <button
+                key={bg.id}
+                type="button"
+                onClick={() => {
+                  setBackdropThemeId(bg.id);
+                  showToast(`Backdrop set to ${bg.name}!`, 'success');
+                }}
+                className={`rounded-2xl p-3 border-2 text-left flex flex-col justify-between cursor-pointer transition-all ${
+                  active
+                    ? 'bg-[#FEF9C3] border-[#111827] shadow-[0_3px_0_#111827]'
+                    : 'bg-white border-[#CBD5E1] hover:border-[#111827]'
+                }`}
+              >
+                <div>
+                  <div
+                    className="relative h-14 rounded-xl border-2 border-[#111827] overflow-hidden mb-2.5"
+                    style={{ background: bg.canvasGradient }}
+                  >
+                    <span
+                      className="absolute -top-3 -left-3 w-10 h-10 rounded-full blur-md opacity-70"
+                      style={{ backgroundColor: bg.bloomColors[0] }}
+                    />
+                    <span
+                      className="absolute -top-3 -right-3 w-10 h-10 rounded-full blur-md opacity-70"
+                      style={{ backgroundColor: bg.bloomColors[1] }}
+                    />
+                    <span
+                      className="absolute -bottom-3 -left-3 w-10 h-10 rounded-full blur-md opacity-60"
+                      style={{ backgroundColor: bg.bloomColors[2] }}
+                    />
+                    <span
+                      className="absolute -bottom-3 -right-3 w-10 h-10 rounded-full blur-md opacity-60"
+                      style={{ backgroundColor: bg.bloomColors[3] }}
+                    />
+                    <span
+                      className="absolute top-1.5 right-2 text-xs font-black"
+                      style={{ color: bg.starFill }}
+                    >
+                      ✦
+                    </span>
+                    <span
+                      className="absolute bottom-1.5 left-2 w-4 h-4 rounded border flex items-center justify-center text-[8px] font-black"
+                      style={{
+                        backgroundColor: bg.diePrimaryFill,
+                        borderColor: bg.diePrimaryStroke,
+                        color: bg.diePrimaryPip,
+                      }}
+                    >
+                      ⚄
+                    </span>
+                  </div>
+                  <div className="font-display text-xs font-extrabold text-[#111827]">
+                    {bg.name}
+                  </div>
+                </div>
+                <div
+                  className={`mt-2 text-[11px] font-display font-extrabold ${
+                    active ? 'text-[#047857]' : 'text-[#1D4ED8]'
+                  }`}
+                >
+                  {active ? '✓ Active' : 'Use Backdrop'}
+                </div>
+              </button>
             );
           })}
         </div>

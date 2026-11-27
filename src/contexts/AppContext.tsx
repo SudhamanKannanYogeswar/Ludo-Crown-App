@@ -69,6 +69,7 @@ import {
   updateWalletRewardsAndChallenges,
 } from '../services/firestoreService';
 import {
+  BACKDROP_THEMES,
   computeLeagueFromElo,
   DAILY_CHALLENGES,
   DAILY_STREAK_REWARDS,
@@ -94,6 +95,7 @@ import {
 
 const GUEST_PROFILE_KEY = 'ludo_crown_guest_profile_v1';
 const GUEST_WALLET_KEY = 'ludo_crown_guest_wallet_v1';
+const BACKDROP_THEME_KEY = 'ludo_crown_backdrop_theme_v1';
 
 export interface OfflineMatchConfig {
   mode: GameMode;
@@ -128,6 +130,9 @@ interface AppContextValue {
   setActiveTab: (tab: ActiveTab) => void;
   soundMuted: boolean;
   toggleSoundMuted: () => void;
+  backdropThemeId: string;
+  setBackdropThemeId: (id: string) => void;
+  cycleBackdropTheme: () => void;
   signInWithGoogle: () => Promise<void>;
   signOutUser: () => Promise<void>;
   // Profile & Cosmetics
@@ -248,6 +253,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [wallet, setWallet] = useState<UserWallet>(() => loadGuestWallet());
   const [activeTab, setActiveTab] = useState<ActiveTab>('lobby');
   const [soundMuted, setSoundMuted] = useState(false);
+  const [backdropThemeId, setBackdropThemeIdState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(BACKDROP_THEME_KEY);
+      if (saved && BACKDROP_THEMES.some((t) => t.id === saved)) return saved;
+    } catch {
+      // ignore storage errors
+    }
+    return BACKDROP_THEMES[0].id;
+  });
+
+  const setBackdropThemeId = useCallback((id: string) => {
+    if (!BACKDROP_THEMES.some((t) => t.id === id)) return;
+    setBackdropThemeIdState(id);
+    try {
+      localStorage.setItem(BACKDROP_THEME_KEY, id);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const cycleBackdropTheme = useCallback(() => {
+    setBackdropThemeIdState((prev) => {
+      const idx = BACKDROP_THEMES.findIndex((t) => t.id === prev);
+      const next = BACKDROP_THEMES[(idx + 1) % BACKDROP_THEMES.length];
+      try {
+        localStorage.setItem(BACKDROP_THEME_KEY, next.id);
+      } catch {
+        // ignore storage errors
+      }
+      return next.id;
+    });
+  }, []);
 
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [activeRoom, setActiveRoom] = useState<RoomDoc | null>(null);
@@ -1508,6 +1545,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveTab,
       soundMuted,
       toggleSoundMuted,
+      backdropThemeId,
+      setBackdropThemeId,
+      cycleBackdropTheme,
       signInWithGoogle,
       signOutUser,
       saveCustomization,
@@ -1568,6 +1608,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activeTab,
       soundMuted,
       toggleSoundMuted,
+      backdropThemeId,
+      setBackdropThemeId,
+      cycleBackdropTheme,
       signInWithGoogle,
       signOutUser,
       saveCustomization,

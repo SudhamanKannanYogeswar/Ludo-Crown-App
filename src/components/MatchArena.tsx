@@ -9,6 +9,7 @@ import {
   Crown,
   Dices,
   MessageSquare,
+  Palette,
   Pause,
   Play,
   RotateCcw,
@@ -23,8 +24,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import {
+  BACKDROP_THEMES,
   BOARD_THEMES,
   BOT_ROSTER,
+  getBackdropThemeById,
   PLAYER_COLOR_META,
   QUICK_CHAT_EMOTES,
 } from '../data/catalog';
@@ -88,6 +91,9 @@ export function MatchArena() {
     offlineMatch,
     soundMuted,
     toggleSoundMuted,
+    backdropThemeId,
+    setBackdropThemeId,
+    cycleBackdropTheme,
     hostStartRoom,
     submitMultiplayerTurn,
     sendChat,
@@ -223,6 +229,27 @@ export function MatchArena() {
   const [autoFillSeconds, setAutoFillSeconds] = useState(10);
   const [autoFillPaused, setAutoFillPaused] = useState(false);
   const [rematchLoading, setRematchLoading] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const onChange = (e: MediaQueryListEvent) => setIsDesktopViewport(e.matches);
+    setIsDesktopViewport(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const activeBackdropTheme = getBackdropThemeById(backdropThemeId);
+
+  const handleCycleBackdrop = () => {
+    const idx = BACKDROP_THEMES.findIndex((t) => t.id === backdropThemeId);
+    const next = BACKDROP_THEMES[(idx + 1) % BACKDROP_THEMES.length];
+    cycleBackdropTheme();
+    showToast(`Backdrop: ${next.name}`, 'info');
+  };
 
   const playerCapturesRef = useRef(0);
   const playerSixesRef = useRef(0);
@@ -1312,46 +1339,106 @@ export function MatchArena() {
                 </div>
               </div>
 
-              {/* Board Edition Quick Selector */}
-              <div className="space-y-2.5">
-                <h2 className="font-display text-base font-extrabold text-[#111827]">
-                  Board edition
-                </h2>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {availableBoardThemes.slice(0, 4).map((theme) => {
-                    const selected = profile.boardTheme === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        type="button"
-                        onClick={() =>
-                          saveCustomization({
-                            displayName: profile.displayName,
-                            avatarId: profile.avatarId,
-                            avatarFrame: profile.avatarFrame,
-                            boardTheme: theme.id,
-                            diceTheme: profile.diceTheme,
-                          })
-                        }
-                        className={`px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-2 text-left cursor-pointer transition-colors ${
-                          selected
-                            ? 'bg-white border-2 border-[#111827] shadow-[0_2px_0_#111827]'
-                            : 'bg-white/80 border border-[#CBD5E1] hover:border-[#111827]'
-                        }`}
-                      >
-                        <span className="font-display text-xs font-extrabold text-[#111827] truncate">
-                          {theme.name}
-                        </span>
-                        <span
-                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                            selected ? 'border-[#1D4ED8]' : 'border-[#94A3B8]'
+              {/* Board Edition & Arena Backdrop Quick Selectors */}
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="font-display text-base font-extrabold text-[#111827]">
+                      Board edition
+                    </h2>
+                    <span className="text-[11px] font-semibold text-[#64748B]">
+                      Changes board frame, track &amp; stars
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {availableBoardThemes.slice(0, 4).map((theme) => {
+                      const selected = profile.boardTheme === theme.id;
+                      return (
+                        <button
+                          key={theme.id}
+                          type="button"
+                          onClick={() =>
+                            saveCustomization({
+                              displayName: profile.displayName,
+                              avatarId: profile.avatarId,
+                              avatarFrame: profile.avatarFrame,
+                              boardTheme: theme.id,
+                              diceTheme: profile.diceTheme,
+                            })
+                          }
+                          className={`px-3 py-2.5 rounded-2xl flex items-center justify-between gap-2 text-left cursor-pointer transition-colors ${
+                            selected
+                              ? 'bg-white border-2 border-[#111827] shadow-[0_2px_0_#111827]'
+                              : 'bg-white/85 border border-[#CBD5E1] hover:border-[#111827]'
                           }`}
                         >
-                          {selected && <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />}
-                        </span>
-                      </button>
-                    );
-                  })}
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-7 h-7 rounded-lg p-[2px] border border-[#111827]/40 shrink-0 flex items-center justify-center"
+                              style={{ background: theme.outerBezelGradient }}
+                            >
+                              <span
+                                className="w-full h-full rounded-[4px] border"
+                                style={{
+                                  backgroundColor: theme.tileBg,
+                                  borderColor: theme.frameBg,
+                                }}
+                              />
+                            </span>
+                            <span className="font-display text-xs font-extrabold text-[#111827] truncate">
+                              {theme.name}
+                            </span>
+                          </div>
+                          <span
+                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                              selected ? 'border-[#1D4ED8]' : 'border-[#94A3B8]'
+                            }`}
+                          >
+                            {selected && <span className="w-2 h-2 rounded-full bg-[#1D4ED8]" />}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Ambient Backdrop Variations (All 5 Free) */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="font-display text-sm font-extrabold text-[#111827]">
+                      Table backdrop
+                    </h2>
+                    <span className="text-[11px] font-semibold text-[#64748B]">
+                      {activeBackdropTheme.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                    {BACKDROP_THEMES.map((bg) => {
+                      const activeBg = backdropThemeId === bg.id;
+                      return (
+                        <button
+                          key={bg.id}
+                          type="button"
+                          onClick={() => setBackdropThemeId(bg.id)}
+                          className={`px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 shrink-0 cursor-pointer transition-all ${
+                            activeBg
+                              ? 'bg-white border-2 border-[#111827] shadow-[0_2px_0_#111827]'
+                              : 'bg-white/85 border border-[#CBD5E1] hover:border-[#111827]'
+                          }`}
+                        >
+                          <span
+                            className="w-5 h-5 rounded-full border border-[#111827]/30 shrink-0"
+                            style={{
+                              background: `linear-gradient(135deg, ${bg.swatchColors[0]} 0%, ${bg.swatchColors[1]} 52%, ${bg.swatchColors[2]} 100%)`,
+                            }}
+                          />
+                          <span className="font-display text-[11px] font-extrabold text-[#111827] whitespace-nowrap">
+                            {bg.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -1671,6 +1758,22 @@ export function MatchArena() {
           </span>
           <button
             type="button"
+            onClick={handleCycleBackdrop}
+            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white border-2 border-[#CBD5E1] hover:border-[#111827] text-[#111827] text-[11px] font-display font-extrabold cursor-pointer"
+            title={`Switch background theme (${activeBackdropTheme.name})`}
+            aria-label={`Switch background theme, current: ${activeBackdropTheme.name}`}
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-full border border-[#111827]/40 shrink-0"
+              style={{
+                background: `linear-gradient(135deg, ${activeBackdropTheme.swatchColors[0]}, ${activeBackdropTheme.swatchColors[1]}, ${activeBackdropTheme.swatchColors[2]})`,
+              }}
+            />
+            <Palette className="w-3.5 h-3.5 text-[#1D4ED8] sm:hidden" />
+            <span className="hidden sm:inline">{activeBackdropTheme.name}</span>
+          </button>
+          <button
+            type="button"
             onClick={toggleSoundMuted}
             className="p-1.5 rounded-xl bg-white border-2 border-[#CBD5E1] hover:border-[#111827] text-[#111827] cursor-pointer"
             aria-label={soundMuted ? 'Unmute' : 'Mute'}
@@ -1700,19 +1803,21 @@ export function MatchArena() {
 
           <div className="w-full flex items-center justify-center my-auto">
             <div className={`relative ${mobileBoardSizeClass} aspect-square`}>
-              <LudoBoard
-                tokens={tokens}
-                activeColors={activeColors}
-                currentTurnColor={currentSeat?.color || 'red'}
-                myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
-                playerNames={playerNamesMap}
-                movableTokenIndices={movableTokenIndices}
-                canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
-                boardThemeId={profile.boardTheme}
-                diceValue={rawDiceValue}
-                onSelectToken={(idx) => executeTokenMove(currentSeat, idx)}
-                onAnimatingChange={setBoardAnimating}
-              />
+              {!isDesktopViewport && (
+                <LudoBoard
+                  tokens={tokens}
+                  activeColors={activeColors}
+                  currentTurnColor={currentSeat?.color || 'red'}
+                  myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
+                  playerNames={playerNamesMap}
+                  movableTokenIndices={movableTokenIndices}
+                  canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
+                  boardThemeId={profile.boardTheme}
+                  diceValue={rawDiceValue}
+                  onSelectToken={(idx) => executeTokenMove(currentSeat, idx)}
+                  onAnimatingChange={setBoardAnimating}
+                />
+              )}
               {renderBoardFlashBanner()}
             </div>
           </div>
@@ -1791,19 +1896,21 @@ export function MatchArena() {
             </div>
 
             <div className="relative w-[min(100%,max(320px,calc(100dvh-204px)))] max-w-[540px] aspect-square shrink-0">
-              <LudoBoard
-                tokens={tokens}
-                activeColors={activeColors}
-                currentTurnColor={currentSeat?.color || 'red'}
-                myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
-                playerNames={playerNamesMap}
-                movableTokenIndices={movableTokenIndices}
-                canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
-                boardThemeId={profile.boardTheme}
-                diceValue={rawDiceValue}
-                onSelectToken={(idx) => executeTokenMove(currentSeat, idx)}
-                onAnimatingChange={setBoardAnimating}
-              />
+              {isDesktopViewport && (
+                <LudoBoard
+                  tokens={tokens}
+                  activeColors={activeColors}
+                  currentTurnColor={currentSeat?.color || 'red'}
+                  myColor={isPassAndPlay ? currentSeat?.color || null : mySeat?.color || null}
+                  playerNames={playerNamesMap}
+                  movableTokenIndices={movableTokenIndices}
+                  canInteract={isMyTurn && turnPhase === 'move' && !boardAnimating && !holdPause}
+                  boardThemeId={profile.boardTheme}
+                  diceValue={rawDiceValue}
+                  onSelectToken={(idx) => executeTokenMove(currentSeat, idx)}
+                  onAnimatingChange={setBoardAnimating}
+                />
+              )}
               {renderBoardFlashBanner()}
             </div>
 

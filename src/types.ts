@@ -146,12 +146,40 @@ export interface BoardThemeSpec {
   description: string;
   priceCoins: number;
   currency: 'coins' | 'gems';
+  outerBezelGradient: string;
   frameBg: string;
   tileBg: string;
   tileBorder: string;
   safeBg: string;
+  yardInnerBg: string;
+  yardStroke: string;
+  centerGradientStart: string;
   centerBg: string;
+  starFill: string;
+  starStroke: string;
   swatchHex: string;
+  patternStyle: 'classic' | 'palace' | 'midnight' | 'crystal';
+}
+
+export interface BackdropThemeSpec {
+  id: string;
+  name: string;
+  description: string;
+  canvasGradient: string;
+  dotColor: string;
+  rayColor: string;
+  bloomColors: [string, string, string, string];
+  diePrimaryFill: string;
+  diePrimaryStroke: string;
+  diePrimaryPip: string;
+  dieSecondaryFill: string;
+  dieSecondaryStroke: string;
+  starFill: string;
+  starStroke: string;
+  starAltFill: string;
+  starAltStroke: string;
+  swatchColors: [string, string, string];
+  isDark?: boolean;
 }
 
 export interface DiceThemeSpec {

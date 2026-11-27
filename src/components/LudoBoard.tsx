@@ -112,11 +112,18 @@ export function LudoBoard({
   const [captureBurst, setCaptureBurst] = useState<BurstState | null>(null);
   const [stepRipple, setStepRipple] = useState<BurstState | null>(null);
 
+  const tokensRef = useRef<TokenPositions>(tokens);
+  tokensRef.current = tokens;
   const prevTokensRef = useRef<TokenPositions>(cloneTokens(tokens));
   const animRunIdRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const onAnimChangeRef = useRef(onAnimatingChange);
   onAnimChangeRef.current = onAnimatingChange;
+
+  const tokensSignature = useMemo(
+    () => ALL_COLORS.map((c) => tokens[c].join(',')).join('|'),
+    [tokens]
+  );
 
   useEffect(() => {
     if (!canInteract) {
@@ -124,10 +131,19 @@ export function LudoBoard({
     }
   }, [canInteract, currentTurnColor, movableTokenIndices]);
 
+  // Cancel any stray RAF only when the board component unmounts
+  useEffect(() => {
+    return () => {
+      animRunIdRef.current++;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
   // Step-by-step readable forward hop + capture impact + trace-back-to-home animation engine
+  // Keyed strictly on tokensSignature so Firestore ack snapshots with unchanged positions never kill an active hop!
   useEffect(() => {
     const prev = prevTokensRef.current;
-    const next = tokens;
+    const next = tokensRef.current;
 
     const movers: { color: PlayerColor; idx: number; from: number; to: number }[] = [];
     const captured: { color: PlayerColor; idx: number; from: number }[] = [];
@@ -150,16 +166,12 @@ export function LudoBoard({
 
     prevTokensRef.current = cloneTokens(next);
 
-    const prefersReduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    // If nothing actually moved, never interrupt an in-progress hop!
+    if (totalChanged === 0) {
+      return;
+    }
 
-    if (
-      totalChanged === 0 ||
-      totalChanged > 4 ||
-      movers.length !== 1 ||
-      prefersReduced
-    ) {
+    if (totalChanged > 4 || movers.length !== 1) {
       animRunIdRef.current++;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       setAnimOverrides({});
@@ -230,10 +242,10 @@ export function LudoBoard({
         }
       }
 
-      // Phase 1: Crisp, comfortable box-by-box hop pace so every single square jump is easy to follow
+      // Phase 1: Crisp, buoyant square-by-square hop so every single tile jump is unmistakable
       const isDeployment = mover.from === -1 && mover.to === 0;
-      const hopDuration = isDeployment ? 310 : 175;
-      const peakLift = isDeployment ? 24 : 15;
+      const hopDuration = isDeployment ? 320 : 195;
+      const peakLift = isDeployment ? 30 : 20;
 
       for (let seg = 0; seg < forwardCoords.length - 1; seg++) {
         if (isCancelled()) return;
@@ -245,7 +257,7 @@ export function LudoBoard({
           const row = r0 + (r1 - r0) * eased;
           const col = c0 + (c1 - c0) * eased;
           const hopLift = Math.sin(t * Math.PI) * peakLift;
-          const scaleBoost = 1 + Math.sin(t * Math.PI) * 0.16;
+          const scaleBoost = 1 + Math.sin(t * Math.PI) * 0.22;
 
           setAnimOverrides({
             ...frozenCaptured,
@@ -384,11 +396,7 @@ export function LudoBoard({
     };
 
     runSequence();
-
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, [tokens]);
+  }, [tokensSignature]);
 
   const trackMap = useMemo(() => {
     const map = new Map<string, { trackIdx: number; startColor?: PlayerColor; isStar: boolean }>();
@@ -504,31 +512,31 @@ export function LudoBoard({
       group.forEach((item, idx) => {
         let offsetX = 0;
         let offsetY = 0;
-        let scale = item.step === 56 ? 0.78 : 1;
+        let scale = item.step === 56 ? 0.8 : 1;
         if (count === 2) {
-          offsetX = idx === 0 ? -0.22 : 0.22;
+          offsetX = idx === 0 ? -0.24 : 0.24;
           offsetY = idx === 0 ? -0.05 : 0.08;
-          scale = item.step === 56 ? 0.68 : 0.86;
+          scale = item.step === 56 ? 0.7 : 0.88;
         } else if (count === 3) {
           const offsets = [
-            [0, -0.2],
-            [-0.22, 0.14],
-            [0.22, 0.14],
+            [0, -0.22],
+            [-0.24, 0.15],
+            [0.24, 0.15],
           ];
           offsetX = offsets[idx][0];
           offsetY = offsets[idx][1];
-          scale = 0.78;
+          scale = 0.8;
         } else if (count >= 4) {
           const offsets = [
-            [-0.21, -0.18],
-            [0.21, -0.18],
-            [-0.21, 0.18],
-            [0.21, 0.18],
+            [-0.23, -0.19],
+            [0.23, -0.19],
+            [-0.23, 0.19],
+            [0.23, 0.19],
           ];
           const pair = offsets[idx % 4];
           offsetX = pair[0];
           offsetY = pair[1];
-          scale = 0.74;
+          scale = 0.76;
         }
         result.push({ ...item, offsetX, offsetY, scale });
       });
@@ -561,9 +569,44 @@ export function LudoBoard({
           width={size}
           height={size}
           fill={`url(#yard-grad-${color})`}
-          stroke="#1E293B"
-          strokeWidth={1.6}
+          stroke={theme.yardStroke}
+          strokeWidth={1.8}
         />
+
+        {/* Edition-specific subtle decorative corner motif */}
+        {theme.patternStyle === 'palace' && (
+          <rect
+            x={x + 10}
+            y={y + 10}
+            width={size - 20}
+            height={size - 20}
+            rx={14}
+            fill="none"
+            stroke="#FDE68A"
+            strokeOpacity={0.55}
+            strokeWidth={2}
+            strokeDasharray="6 4"
+          />
+        )}
+        {theme.patternStyle === 'midnight' && (
+          <rect
+            x={x + 8}
+            y={y + 8}
+            width={size - 16}
+            height={size - 16}
+            rx={14}
+            fill="none"
+            stroke="#38BDF8"
+            strokeOpacity={0.5}
+            strokeWidth={2}
+          />
+        )}
+        {theme.patternStyle === 'crystal' && (
+          <g opacity={0.4} stroke="#FFFFFF" strokeWidth={1.5} fill="none">
+            <polygon points={`${x + 16},${y + 8} ${x + 24},${y + 16} ${x + 16},${y + 24} ${x + 8},${y + 16}`} />
+            <polygon points={`${x + size - 16},${y + 8} ${x + size - 8},${y + 16} ${x + size - 16},${y + 24} ${x + size - 24},${y + 16}`} />
+          </g>
+        )}
 
         {/* Pulsing golden spotlight border on the active player's corner yard */}
         {isActiveTurn && (
@@ -592,7 +635,7 @@ export function LudoBoard({
           </g>
         )}
 
-        {/* Crisp player label right along the top edge of the yard (like classic Ludo) */}
+        {/* Crisp player label right along the top edge of the yard */}
         {isPresent && yardName && (
           <text
             x={x + size / 2}
@@ -608,17 +651,17 @@ export function LudoBoard({
           </text>
         )}
 
-        {/* Crisp pure-white inner home yard box */}
+        {/* Edition-tinted inner home yard courtyard */}
         <rect
           x={x + 28}
           y={y + 30}
           width={size - 56}
           height={size - 58}
           rx={18}
-          fill="#FFFFFF"
+          fill={theme.yardInnerBg}
           stroke={meta.dark}
-          strokeOpacity={0.45}
-          strokeWidth={2}
+          strokeOpacity={0.5}
+          strokeWidth={2.2}
         />
 
         {/* Active Turn Tag tucked on the bottom lip of the active yard */}
@@ -648,7 +691,7 @@ export function LudoBoard({
           </g>
         )}
 
-        {/* 4 vivid classic colored circular token pads inside the white courtyard */}
+        {/* 4 vivid colored circular token pads inside the courtyard */}
         {YARD_SLOTS[color].map(([r, c], idx) => {
           const cx = (c + 0.5) * CELL;
           const cy = (r + 0.5) * CELL;
@@ -657,18 +700,18 @@ export function LudoBoard({
               <circle
                 cx={cx}
                 cy={cy}
-                r={19}
+                r={20}
                 fill={meta.fill}
                 stroke={meta.dark}
-                strokeWidth={1.8}
+                strokeWidth={2}
               />
               <circle
                 cx={cx}
                 cy={cy}
-                r={13.5}
+                r={14}
                 fill="none"
-                stroke="rgba(255,255,255,0.4)"
-                strokeWidth={1.5}
+                stroke="rgba(255,255,255,0.45)"
+                strokeWidth={1.6}
               />
             </g>
           );
@@ -679,22 +722,25 @@ export function LudoBoard({
 
   return (
     <div
-      className="relative w-full h-full aspect-square mx-auto rounded-[22px] p-[7px] sm:p-[10px] shadow-[0_18px_48px_rgba(6,18,64,0.62)] select-none"
+      className="relative w-full h-full aspect-square mx-auto rounded-[22px] p-[8px] sm:p-[11px] shadow-[0_18px_48px_rgba(6,18,64,0.52)] select-none transition-all duration-300"
       style={{
-        background: 'linear-gradient(145deg, #FFE46B 0%, #D9950B 48%, #FFE266 100%)',
+        background: theme.outerBezelGradient,
       }}
     >
       <div
-        className="w-full h-full rounded-[16px] p-[3px] shadow-inner"
+        className="w-full h-full rounded-[16px] p-[4px] shadow-inner transition-colors duration-300"
         style={{ backgroundColor: theme.frameBg }}
       >
         <svg
           viewBox="0 0 600 600"
-          className="w-full h-full rounded-[13px] overflow-hidden block bg-white"
+          className="w-full h-full block overflow-visible"
           role="img"
-          aria-label="Ludo Crown 15 by 15 game board"
+          aria-label={`Ludo Crown 15 by 15 game board — ${theme.name}`}
         >
           <defs>
+            <clipPath id="board-rounded-clip">
+              <rect x={0} y={0} width={600} height={600} rx={12} ry={12} />
+            </clipPath>
             {ALL_COLORS.map((c) => {
               const meta = PLAYER_COLOR_META[c];
               return (
@@ -704,7 +750,7 @@ export function LudoBoard({
                     <stop offset="100%" stopColor={meta.dark} />
                   </linearGradient>
                   <radialGradient id={`pin-jewel-${c}`} cx="34%" cy="28%" r="70%">
-                    <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.72" />
+                    <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.78" />
                     <stop offset="28%" stopColor={meta.ring} />
                     <stop offset="68%" stopColor={meta.fill} />
                     <stop offset="100%" stopColor={meta.dark} />
@@ -718,12 +764,13 @@ export function LudoBoard({
               <stop offset="100%" stopColor="#CBD5E1" />
             </linearGradient>
             <radialGradient id="center-crown-bg" cx="35%" cy="30%" r="70%">
-              <stop offset="0%" stopColor="#2663E6" />
+              <stop offset="0%" stopColor={theme.centerGradientStart} />
               <stop offset="100%" stopColor={theme.centerBg} />
             </radialGradient>
           </defs>
 
-          {/* Pure crisp white track canvas */}
+          <g clipPath="url(#board-rounded-clip)">
+          {/* Board edition track canvas */}
           <rect x={0} y={0} width={600} height={600} fill={theme.tileBg} />
 
           {/* 15x15 Track and Colored Home Column Tiles */}
@@ -788,8 +835,8 @@ export function LudoBoard({
                     <g>
                       <path
                         d={`M ${cx + 20} ${cy + 8.5} L ${cx + 23.4} ${cy + 16} L ${cx + 31.6} ${cy + 16.9} L ${cx + 25.4} ${cy + 22.4} L ${cx + 27.2} ${cy + 30.5} L ${cx + 20} ${cy + 26.2} L ${cx + 12.8} ${cy + 30.5} L ${cx + 14.6} ${cy + 22.4} L ${cx + 8.4} ${cy + 16.9} L ${cx + 16.6} ${cy + 16} Z`}
-                        fill="#FFCA28"
-                        stroke="#B46B00"
+                        fill={theme.starFill}
+                        stroke={theme.starStroke}
                         strokeWidth={1.4}
                         strokeLinejoin="round"
                       />
@@ -871,6 +918,7 @@ export function LudoBoard({
               strokeLinejoin="round"
             />
             <rect x={289.5} y={307} width={21} height={2.6} rx={1.3} fill="#FFCA28" />
+          </g>
           </g>
 
           {/* Interactive Hover / Focus Step-by-Step Path & Destination Preview */}
@@ -1042,19 +1090,19 @@ export function LudoBoard({
                 }}
               >
                 {/* Generous touch target */}
-                {token.isMovable && <circle cx={0} cy={-6} r={26} fill="transparent" />}
+                {token.isMovable && <circle cx={0} cy={-8} r={29} fill="transparent" />}
 
                 {/* Bright pulsing golden ring beneath movable pawns */}
                 {token.isMovable && (
-                  <g transform="translate(0, 6)">
+                  <g transform="translate(0, 8)">
                     <ellipse
                       cx={0}
                       cy={0}
-                      rx={18}
-                      ry={12}
-                      fill="rgba(255, 212, 38, 0.34)"
+                      rx={20}
+                      ry={13}
+                      fill="rgba(255, 212, 38, 0.36)"
                       stroke="#FF9900"
-                      strokeWidth={3.2}
+                      strokeWidth={3.4}
                       className="animate-token-ready"
                     />
                   </g>
@@ -1063,89 +1111,89 @@ export function LudoBoard({
                 {/* Grounded dark contact shadow */}
                 <ellipse
                   cx={0}
-                  cy={8}
-                  rx={12.5 * shadowScale}
-                  ry={5.5 * shadowScale}
+                  cy={10.5}
+                  rx={14.5 * shadowScale}
+                  ry={6.2 * shadowScale}
                   fill={`rgba(12, 20, 45, ${shadowOpacity.toFixed(2)})`}
                 />
 
-                {/* Grounded colored concentric base ring (matches classic teardrop pin look) */}
+                {/* Grounded colored concentric base ring */}
                 {token.hopLift < 2 && (
                   <ellipse
                     cx={0}
-                    cy={6}
-                    rx={10.5}
-                    ry={4.8}
+                    cy={8.5}
+                    rx={12.2}
+                    ry={5.4}
                     fill="none"
                     stroke={meta.dark}
-                    strokeWidth={2.2}
-                    opacity={0.7}
+                    strokeWidth={2.4}
+                    opacity={0.75}
                   />
                 )}
 
-                {/* Glossy Teardrop Map-Pin Token (lifts vertically on hops) */}
+                {/* Larger Glossy Teardrop Map-Pin Token (lifts vertically on hops) */}
                 <g transform={`translate(0, ${-token.hopLift})`}>
                   <g className={token.isMovable ? 'animate-pawn-ready' : undefined}>
                     {/* Floating golden downward pointer arrow over movable pawns */}
                     {token.isMovable && (
-                      <g transform="translate(0, -35)" className="animate-turn-drop">
+                      <g transform="translate(0, -40)" className="animate-turn-drop">
                         <path
-                          d="M -6 -6 L 6 -6 L 0 2 Z"
+                          d="M -7 -7 L 7 -7 L 0 2.5 Z"
                           fill="#FFE033"
                           stroke="#8A4B00"
-                          strokeWidth={1.6}
+                          strokeWidth={1.8}
                           strokeLinejoin="round"
                         />
                       </g>
                     )}
 
-                    {/* Bright metallic pearl-white teardrop silhouette */}
+                    {/* Larger bright metallic pearl-white teardrop silhouette (~22% bigger) */}
                     <path
-                      d="M 0 6.5 C -4 0.5 -12.8 -6.8 -12.8 -14.8 C -12.8 -22.2 -7.1 -27.8 0 -27.8 C 7.1 -27.8 12.8 -22.2 12.8 -14.8 C 12.8 -6.8 4 0.5 0 6.5 Z"
+                      d="M 0 9.5 C -4.8 2.2 -15.6 -6.8 -15.6 -16.4 C -15.6 -25.4 -8.6 -32.2 0 -32.2 C 8.6 -32.2 15.6 -25.4 15.6 -16.4 C 15.6 -6.8 4.8 2.2 0 9.5 Z"
                       fill="url(#pin-shell-metal)"
-                      stroke="#1E293B"
-                      strokeWidth={2}
+                      stroke="#111827"
+                      strokeWidth={2.3}
                       strokeLinejoin="round"
                     />
 
                     {/* Crisp inner white highlight rim */}
                     <path
-                      d="M 0 3.2 C -3 -1.8 -10.2 -8.2 -10.2 -14.8 C -10.2 -20.8 -5.6 -25.2 0 -25.2 C 5.6 -25.2 10.2 -20.8 10.2 -14.8 C 10.2 -8.2 3 -1.8 0 3.2 Z"
+                      d="M 0 5.5 C -3.6 -0.8 -12.6 -8.4 -12.6 -16.4 C -12.6 -23.6 -6.9 -29.2 0 -29.2 C 6.9 -29.2 12.6 -23.6 12.6 -16.4 C 12.6 -8.4 3.6 -0.8 0 5.5 Z"
                       fill="none"
                       stroke="#FFFFFF"
-                      strokeWidth={1.4}
+                      strokeWidth={1.6}
                     />
 
-                    {/* Vivid jewel-colored center orb */}
+                    {/* Larger vivid jewel-colored center orb */}
                     <circle
                       cx={0}
-                      cy={-15}
-                      r={7.8}
+                      cy={-16.6}
+                      r={9.8}
                       fill={`url(#pin-jewel-${token.color})`}
                       stroke={meta.dark}
-                      strokeWidth={1.5}
+                      strokeWidth={1.8}
                     />
 
                     {/* Crisp glossy top-left specular gleam */}
                     <ellipse
-                      cx={-2.6}
-                      cy={-17.8}
-                      rx={2.7}
-                      ry={1.6}
-                      transform="rotate(-30 -2.6 -17.8)"
+                      cx={-3.3}
+                      cy={-20.1}
+                      rx={3.4}
+                      ry={2}
+                      transform="rotate(-30 -3.3 -20.1)"
                       fill="#FFFFFF"
-                      opacity={0.92}
+                      opacity={0.94}
                     />
 
                     {/* Retreat dizzy ring when captured */}
                     {token.isRetreating && (
                       <circle
                         cx={0}
-                        cy={-15}
-                        r={11.5}
+                        cy={-16.6}
+                        r={13.8}
                         fill="none"
                         stroke="#FFE033"
-                        strokeWidth={2.2}
+                        strokeWidth={2.5}
                         strokeDasharray="4 3"
                       />
                     )}

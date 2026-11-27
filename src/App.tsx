@@ -44,6 +44,7 @@ function LudoCrownShell() {
     setActiveTab,
     soundMuted,
     toggleSoundMuted,
+    backdropThemeId,
     activeRoom,
     offlineMatch,
     signInWithGoogle,
@@ -66,7 +67,7 @@ function LudoCrownShell() {
 
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden flex flex-col text-[#111827] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-      <AnimatedGameBackdrop />
+      <AnimatedGameBackdrop backdropThemeId={backdropThemeId} />
 
       {!isPlaying && (
         <header className="shrink-0 z-30 bg-white/95 backdrop-blur-md border-b-2 border-[#BAE6FD] shadow-[0_2px_10px_rgba(37,99,235,0.08)]">

@@ -11,7 +11,6 @@ import {
   Send,
   ShieldCheck,
   SlidersHorizontal,
-  Smartphone,
   Sparkles,
   Trophy,
   Users,
@@ -22,6 +21,7 @@ import {
   getTodayDateString,
   HERO_STUDIO_BOARD_IMAGE,
   MODE_DUEL1V1_IMAGE,
+  MODE_PASSPLAY_IMAGE,
   MODE_QUICK4P_IMAGE,
   MODE_VSBOT_IMAGE,
 } from '../data/catalog';
@@ -493,10 +493,20 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 className="group relative overflow-hidden rounded-3xl p-3.5 text-left bg-gradient-to-b from-[#FFFDF0] via-[#FEF9C3] to-[#FDE047] border-2 border-[#111827] shadow-[0_4px_0_#111827,0_8px_16px_rgba(234,179,8,0.18)] hover:-translate-y-1 active:translate-y-0.5 transition-transform cursor-pointer flex flex-col justify-between min-h-[126px]"
               >
                 <div
-                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] bg-gradient-to-b from-[#F59E0B] to-[#D97706] text-white flex items-center justify-center animate-badge-bob"
+                  className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-gradient-to-b from-[#F59E0B] to-[#D97706] flex items-center justify-center animate-badge-bob"
                   style={{ animationDelay: '0.7s' }}
                 >
-                  <Smartphone className="w-6 h-6" />
+                  <img
+                    src={MODE_PASSPLAY_IMAGE}
+                    alt="Pass and Play"
+                    draggable={false}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover scale-[1.14] group-hover:scale-[1.24] transition-transform duration-200"
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/45 to-transparent"
+                  />
                 </div>
                 <div className="mt-2.5">
                   <div className="font-display text-sm font-extrabold text-[#111827] leading-tight">
@@ -1017,8 +1027,14 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             <div className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-3xl bg-white border-2 border-[#111827] shadow-[0_6px_0_#111827] p-5 sm:p-6 animate-pop-in space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-b from-[#FACC15] to-[#F59E0B] border-2 border-[#111827] flex items-center justify-center text-[#111827]">
-                    <Smartphone className="w-5 h-5" />
+                  <div className="relative w-10 h-10 rounded-xl bg-gradient-to-b from-[#FACC15] to-[#F59E0B] border-2 border-[#111827] overflow-hidden shrink-0 flex items-center justify-center">
+                    <img
+                      src={MODE_PASSPLAY_IMAGE}
+                      alt="Pass and Play"
+                      draggable={false}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover scale-[1.12]"
+                    />
                   </div>
                   <div>
                     <h2 className="font-display text-lg font-extrabold text-[#111827] leading-tight">
