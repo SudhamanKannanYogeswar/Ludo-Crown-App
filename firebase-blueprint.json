@@ -23,6 +23,8 @@
         "xp": { "type": "number" },
         "league": { "type": "string", "enum": ["bronze", "silver", "gold", "grandmaster"] },
         "isPublic": { "type": "boolean" },
+        "presenceStatus": { "type": "string", "enum": ["online", "in_match", "offline"] },
+        "lastActiveMs": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

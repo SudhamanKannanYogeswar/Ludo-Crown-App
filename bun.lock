@@ -6,6 +6,7 @@
       "name": "react-example",
       "dependencies": {
         "@capacitor-community/admob": "6",
+        "@capacitor-firebase/analytics": "6",
         "@capacitor-firebase/authentication": "6",
         "@capacitor/app": "6",
         "@capacitor/core": "6",
@@ -227,6 +228,8 @@
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
 
     "@capacitor-community/admob": ["@capacitor-community/admob@6.2.0", "", { "dependencies": { "@capacitor/core": "^6.0.0" } }, "sha512-Po+FXAs4XW2LOegEo1pBssXVjblzt2LeyCiQML9Ep/GnDZooI+ZTIpnB1yU6W3dVW8iO2FENkfWM+oE8O+fNSA=="],
+
+    "@capacitor-firebase/analytics": ["@capacitor-firebase/analytics@6.3.1", "", { "peerDependencies": { "@capacitor/core": "^6.0.0", "firebase": "^10.9.0 || ^11.0.0" }, "optionalPeers": ["firebase"] }, "sha512-0XNCHzUgaOg2HILwtChUYlDtWhuoCorzMbulNXHBlqyA1eYTtyKLjyD8t7xBfvzSCqb/2xXjGXX1jClUAY91HQ=="],
 
     "@capacitor-firebase/authentication": ["@capacitor-firebase/authentication@6.3.1", "", { "peerDependencies": { "@capacitor/core": "^6.0.0", "firebase": "^10.9.0 || ^11.0.0" }, "optionalPeers": ["firebase"] }, "sha512-Bv0UMwvzK7nEEFBx8hfrolZ3ueLXcCGvtu0RaJo4sOJuVJD39wu0u9OlZIIkkAMY8h3RdMNo2n4kal3Fl8aIAA=="],
 

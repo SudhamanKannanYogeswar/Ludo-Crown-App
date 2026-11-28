@@ -61,6 +61,7 @@ service cloud.firestore {
           'uid', 'displayName', 'avatarId', 'avatarFrame', 'boardTheme', 'diceTheme',
           'elo', 'gamesPlayed', 'wins', 'captures', 'sixesRolled', 'winStreak',
           'bestStreak', 'trophies', 'level', 'xp', 'league', 'isPublic',
+          'presenceStatus', 'lastActiveMs',
           'createdAt', 'updatedAt'
         ]) &&
         data.uid == userId &&
@@ -83,6 +84,8 @@ service cloud.firestore {
         data.xp is number && data.xp >= 0 && data.xp <= 100000000 &&
         data.league in ['bronze', 'silver', 'gold', 'grandmaster'] &&
         data.isPublic is bool &&
+        (!('presenceStatus' in data) || data.presenceStatus in ['online', 'in_match', 'offline']) &&
+        (!('lastActiveMs' in data) || (data.lastActiveMs is number && data.lastActiveMs >= 0 && data.lastActiveMs <= 9999999999999)) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -315,10 +318,16 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'elo', 'gamesPlayed', 'wins', 'captures', 'sixesRolled',
             'winStreak', 'bestStreak', 'trophies', 'level', 'xp', 'league', 'updatedAt'
+          ]) ||
+          // Action 3: Update live online/in-match/offline presence heartbeat
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'presenceStatus', 'lastActiveMs', 'updatedAt'
           ])
         );
 
-      allow delete: if false;
+      allow delete: if isVerified() &&
+        isValidId(userId) &&
+        request.auth.uid == userId;
     }
 
     // =========================================================================
@@ -359,7 +368,9 @@ service cloud.firestore {
           ])
         );
 
-      allow delete: if false;
+      allow delete: if isVerified() &&
+        isValidId(userId) &&
+        request.auth.uid == userId;
     }
 
     // =========================================================================

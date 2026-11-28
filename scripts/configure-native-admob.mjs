@@ -205,6 +205,7 @@ function configureAndroidFirebaseGradle() {
     googleAuthEnabled,
     hasGoogleServices: false,
     packageMatched: false,
+    mobileSdkAppId: '',
     hasWebClient: false,
     injectedWebClient: false,
     sha1List: [],
@@ -233,6 +234,7 @@ function configureAndroidFirebaseGradle() {
       );
     } else {
       report.packageMatched = true;
+      report.mobileSdkAppId = String(matchingClient?.client_info?.mobilesdk_app_id || '').trim();
       if (!Array.isArray(matchingClient.oauth_client)) {
         matchingClient.oauth_client = [];
       }
@@ -279,7 +281,7 @@ function configureAndroidFirebaseGradle() {
 
       report.hasWebClient = hasWebClient;
       console.log(
-        `Verified google-services.json for com.ludocrown.game (webOAuthClient=${hasWebClient}, androidSha1Count=${report.sha1List.length}, sha1s=${report.sha1List.join(', ') || 'NONE'})`
+        `Verified google-services.json for com.ludocrown.game (appId=${report.mobileSdkAppId || 'UNKNOWN'}, analyticsSdk=enabled, webOAuthClient=${hasWebClient}, androidSha1Count=${report.sha1List.length}, sha1s=${report.sha1List.join(', ') || 'NONE'})`
       );
       if (report.sha1List.length === 0) {
         console.warn(

@@ -24,7 +24,7 @@ export default defineConfig(() => {
           name: 'Ludo Crown — Multiplayer Board Game',
           short_name: 'Ludo Crown',
           description:
-            'Real-time multiplayer Ludo with live matchmaking, table chat, offline AI, competitive tournaments, rewards, and AdMob support.',
+            'Real-time multiplayer Ludo with live matchmaking, table chat, offline AI, competitive tournaments, and daily rewards.',
           theme_color: '#FFFFFF',
           background_color: '#F8FAFC',
           display: 'standalone',
@@ -56,6 +56,10 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff,woff2}'],
+          navigateFallbackDenylist: [/^\/__\/auth/, /^\/__\/firebase/, /^\/api/, /^\/privacy\.html/],
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

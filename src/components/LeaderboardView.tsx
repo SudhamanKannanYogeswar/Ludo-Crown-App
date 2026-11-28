@@ -13,7 +13,7 @@ function getInitials(name: string): string {
 }
 
 export function LeaderboardView() {
-  const { isSignedIn, profile, leaderboard, refreshLeaderboard, signInWithGoogle } = useApp();
+  const { isSignedIn, profile, leaderboard, refreshLeaderboard, signingIn, signInWithGoogle } = useApp();
   const [sortBy, setSortBy] = useState<SortMetric>('elo');
   const [loading, setLoading] = useState(false);
 
@@ -168,10 +168,11 @@ export function LeaderboardView() {
           </p>
           <button
             type="button"
+            disabled={signingIn}
             onClick={signInWithGoogle}
-            className="px-5 py-2.5 rounded-2xl font-display font-extrabold text-xs game-btn-blue cursor-pointer"
+            className="px-5 py-2.5 rounded-2xl font-display font-extrabold text-xs game-btn-blue cursor-pointer disabled:opacity-60"
           >
-            Sign In with Google
+            {signingIn ? 'Signing in...' : 'Sign In with Google'}
           </button>
         </div>
       ) : sortedRows.length === 0 ? (

@@ -11,6 +11,7 @@ import {
   subscribeNativeBannerMetrics,
   syncNativeBannerVisibility,
 } from '../services/adMobService';
+import { syncAnalyticsAdConsent } from '../services/analyticsService';
 
 export function AdMobModalHost() {
   const { adModal } = useApp();
@@ -202,6 +203,7 @@ export function AdPolicyModal({ open, onClose }: { open: boolean; onClose: () =>
   const handleConsentChange = (next: AdConsentMode) => {
     setConsentModeState(next);
     setAdConsentMode(next);
+    syncAnalyticsAdConsent(next).catch(() => {});
     syncNativeBannerVisibility(true, { position: 'top', marginPx: 0, forceReload: true });
   };
 

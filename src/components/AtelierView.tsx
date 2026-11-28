@@ -8,9 +8,14 @@ import {
   BOARD_THEMES,
   DICE_THEMES,
 } from '../data/catalog';
+import { LegalCompliancePanel } from './LegalCompliancePanel';
 import { PlayerAvatar } from './PlayerAvatar';
 
-export function AtelierView() {
+interface AtelierViewProps {
+  onOpenAdPolicy: () => void;
+}
+
+export function AtelierView({ onOpenAdPolicy }: AtelierViewProps) {
   const {
     profile,
     wallet,
@@ -467,6 +472,9 @@ export function AtelierView() {
           </div>
         </section>
       </div>
+
+      {/* Legal, Privacy Policy, Disclaimer & Account Deletion */}
+      <LegalCompliancePanel onOpenAdPolicy={onOpenAdPolicy} />
     </div>
   );
 }

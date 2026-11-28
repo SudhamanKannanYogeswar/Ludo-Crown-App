@@ -27,6 +27,11 @@ import {
   MODE_PASSPLAY_IMAGE,
   MODE_VSBOT_IMAGE,
 } from '../data/catalog';
+import {
+  formatInviteCountdown,
+  getInviteRemainingMs,
+  resolvePlayerPresence,
+} from '../services/firestoreService';
 import { AiDifficulty, GameMode } from '../types';
 
 function getInitials(name: string): string {
@@ -63,9 +68,12 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
     launchOfflinePractice,
     claimDailyStreak,
     triggerRewardedAd,
+    signingIn,
     signInWithGoogle,
     setActiveTab,
     showToast,
+    leaderboard,
+    presenceNowMs,
     friendships,
     incomingInvites,
     inviteFriendToPlay,
@@ -107,9 +115,41 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
   const today = getTodayDateString();
   const dailyChestReady = wallet.lastDailyClaimDate !== today;
 
-  const acceptedFriends = useMemo(
-    () => friendships.filter((f) => f.status === 'accepted'),
-    [friendships]
+  const profileLookup = useMemo(() => {
+    const map = new Map<string, (typeof leaderboard)[number]>();
+    leaderboard.forEach((p) => map.set(p.uid, p));
+    return map;
+  }, [leaderboard]);
+
+  const acceptedFriendsWithPresence = useMemo(() => {
+    return friendships
+      .filter((f) => f.status === 'accepted')
+      .map((f) => {
+        const isRequester = f.requesterUid === profile.uid;
+        const friendUid = isRequester ? f.recipientUid : f.requesterUid;
+        const friendName = isRequester ? f.recipientName : f.requesterName;
+        const friendProfile = profileLookup.get(friendUid);
+        const presence = resolvePlayerPresence(friendProfile, presenceNowMs);
+        return {
+          friendship: f,
+          friendUid,
+          friendName,
+          friendProfile,
+          presence,
+        };
+      })
+      .sort((a, b) => {
+        const rank = (s: 'online' | 'in_match' | 'offline') =>
+          s === 'online' ? 0 : s === 'in_match' ? 1 : 2;
+        const diff = rank(a.presence.status) - rank(b.presence.status);
+        if (diff !== 0) return diff;
+        return (b.friendProfile?.lastActiveMs || 0) - (a.friendProfile?.lastActiveMs || 0);
+      });
+  }, [friendships, profile.uid, profileLookup, presenceNowMs]);
+
+  const onlineFriendsCount = useMemo(
+    () => acceptedFriendsWithPresence.filter((entry) => entry.presence.isOnline).length,
+    [acceptedFriendsWithPresence]
   );
 
   const handleCreatePrivate = async () => {
@@ -349,10 +389,11 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
+              disabled={signingIn}
               onClick={() => signInWithGoogle()}
-              className="px-4 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-blue btn-gloss-sheen cursor-pointer"
+              className="px-4 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-blue btn-gloss-sheen cursor-pointer disabled:opacity-60"
             >
-              Sign In &amp; Join
+              {signingIn ? 'Signing in...' : 'Sign In & Join'}
             </button>
             <button
               type="button"
@@ -374,8 +415,13 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               {getInitials(incomingInvites[0].fromName)}
             </div>
             <div className="min-w-0">
-              <div className="font-display text-sm font-extrabold text-[#111827] truncate">
-                {incomingInvites[0].fromName} invited you to a table!
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="font-display text-sm font-extrabold text-[#111827] truncate">
+                  {incomingInvites[0].fromName} invited you to a table!
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-white/90 border border-[#111827] font-mono text-[10px] font-extrabold text-[#B45309] leading-none">
+                  Expires in {formatInviteCountdown(getInviteRemainingMs(incomingInvites[0], presenceNowMs))}
+                </span>
               </div>
               <div className="font-mono text-xs text-[#334155] font-bold truncate">
                 Room {incomingInvites[0].roomCode} · {incomingInvites[0].seatsCount}/
@@ -779,15 +825,22 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
 
         {/* RIGHT / SECONDARY COLUMN (5 cols on desktop): Friends online + Live Open Tables */}
         <div className="lg:col-span-5 space-y-5">
-          {/* FRIENDS ONLINE SECTION (Matches Image 1 Bottom) */}
+          {/* FRIENDS SECTION WITH REAL-TIME ONLINE/OFFLINE PRESENCE */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h2 className="font-display text-lg font-extrabold text-[#111827]">
-                  Friends online
+                  Friends
                 </h2>
-                <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full bg-[#E11D48] text-white text-xs font-mono font-extrabold border border-[#111827]">
-                  {acceptedFriends.length}
+                <span
+                  className={`inline-flex items-center justify-center min-w-[22px] h-[22px] px-2 rounded-full text-[11px] font-mono font-extrabold border border-[#111827] ${
+                    onlineFriendsCount > 0
+                      ? 'bg-[#10B981] text-white'
+                      : 'bg-[#E2E8F0] text-[#475569]'
+                  }`}
+                  title={`${onlineFriendsCount} online out of ${acceptedFriendsWithPresence.length} friends`}
+                >
+                  {onlineFriendsCount} online
                 </span>
               </div>
               <button
@@ -806,13 +859,14 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 </p>
                 <button
                   type="button"
+                  disabled={signingIn}
                   onClick={signInWithGoogle}
-                  className="px-4 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer"
+                  className="px-4 py-2 rounded-xl font-display font-extrabold text-xs game-btn-blue cursor-pointer disabled:opacity-60"
                 >
-                  Sign In with Google
+                  {signingIn ? 'Signing in...' : 'Sign In with Google'}
                 </button>
               </div>
-            ) : acceptedFriends.length === 0 ? (
+            ) : acceptedFriendsWithPresence.length === 0 ? (
               <div className="studio-card-soft rounded-3xl p-4 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="font-display text-sm font-extrabold text-[#111827]">
@@ -832,32 +886,49 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </div>
             ) : (
               <div className="space-y-2.5">
-                {acceptedFriends.slice(0, 4).map((f, idx) => {
-                  const isRequester = f.requesterUid === profile.uid;
-                  const friendUid = isRequester ? f.recipientUid : f.requesterUid;
-                  const friendName = isRequester ? f.recipientName : f.requesterName;
+                {acceptedFriendsWithPresence.slice(0, 4).map((entry, idx) => {
+                  const { friendship, friendUid, friendName, presence } = entry;
                   const badgeStyle = FRIEND_BADGE_STYLES[idx % FRIEND_BADGE_STYLES.length];
                   const sending = busyAction === `invite_${friendUid}`;
+                  const dotClass =
+                    presence.status === 'online'
+                      ? 'bg-[#10E587] animate-pulse'
+                      : presence.status === 'in_match'
+                        ? 'bg-[#F59E0B]'
+                        : 'bg-[#94A3B8]';
                   return (
                     <div
-                      key={f.id}
+                      key={friendship.id}
                       className="studio-card-soft hover:border-[#111827] transition-colors rounded-2xl px-3.5 py-3 flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="relative shrink-0">
                           <div
-                            className={`w-10 h-10 rounded-full border-2 border-[#111827] ${badgeStyle} font-display font-black text-xs flex items-center justify-center`}
+                            className={`w-10 h-10 rounded-full border-2 border-[#111827] ${badgeStyle} font-display font-black text-xs flex items-center justify-center ${
+                              presence.isOnline ? '' : 'opacity-65 grayscale-[35%]'
+                            }`}
                           >
                             {getInitials(friendName)}
                           </div>
-                          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#10E587] border-2 border-white animate-pulse" />
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ${dotClass} border-2 border-white`}
+                            title={presence.label}
+                          />
                         </div>
                         <div className="min-w-0">
                           <div className="font-display text-sm font-extrabold text-[#111827] truncate">
                             {friendName}
                           </div>
-                          <div className="text-xs text-[#64748B] truncate">
-                            {idx % 2 === 0 ? 'In lobby' : 'Ready to roll'}
+                          <div
+                            className={`text-xs truncate font-semibold ${
+                              presence.status === 'online'
+                                ? 'text-[#059669]'
+                                : presence.status === 'in_match'
+                                  ? 'text-[#D97706]'
+                                  : 'text-[#94A3B8]'
+                            }`}
+                          >
+                            {presence.label}
                           </div>
                         </div>
                       </div>
@@ -866,9 +937,20 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                         type="button"
                         disabled={busyAction !== null}
                         onClick={() => handleInviteFriend(friendUid, friendName)}
-                        className="px-3.5 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-white inline-flex items-center gap-1 cursor-pointer disabled:opacity-60 shrink-0"
+                        title={
+                          presence.isOnline
+                            ? `Invite ${friendName} to play`
+                            : `${friendName} is offline — invite auto-expires in 2 min`
+                        }
+                        className={`px-3.5 py-1.5 rounded-xl font-display font-extrabold text-xs inline-flex items-center gap-1 cursor-pointer disabled:opacity-60 shrink-0 ${
+                          presence.isOnline
+                            ? 'game-btn-white'
+                            : 'bg-[#F8FAFC] hover:bg-white text-[#64748B] border-2 border-[#CBD5E1]'
+                        }`}
                       >
-                        <Send className="w-3 h-3 text-[#1D4ED8]" />
+                        <Send
+                          className={`w-3 h-3 ${presence.isOnline ? 'text-[#1D4ED8]' : 'text-[#94A3B8]'}`}
+                        />
                         {sending ? 'Sending...' : 'Invite'}
                       </button>
                     </div>

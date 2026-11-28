@@ -14,6 +14,11 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { formatPlayerTag, FRIENDS_TABLE_STUDIO_IMAGE } from '../data/catalog';
+import {
+  formatInviteCountdown,
+  getInviteRemainingMs,
+  resolvePlayerPresence,
+} from '../services/firestoreService';
 import { PlayerAvatar } from './PlayerAvatar';
 
 function getInitials(name: string): string {
@@ -43,7 +48,9 @@ export function FriendsView() {
     inviteFriendToPlay,
     acceptRoomInvite,
     declineRoomInvite,
+    signingIn,
     signInWithGoogle,
+    presenceNowMs,
     showToast,
   } = useApp();
 
@@ -89,6 +96,36 @@ export function FriendsView() {
     leaderboard.forEach((p) => map.set(p.uid, p));
     return map;
   }, [leaderboard]);
+
+  const acceptedFriendsWithPresence = useMemo(() => {
+    return acceptedFriends
+      .map((f) => {
+        const isRequester = f.requesterUid === profile.uid;
+        const friendUid = isRequester ? f.recipientUid : f.requesterUid;
+        const friendName = isRequester ? f.recipientName : f.requesterName;
+        const friendProfile = profileLookup.get(friendUid);
+        const presence = resolvePlayerPresence(friendProfile, presenceNowMs);
+        return {
+          friendship: f,
+          friendUid,
+          friendName,
+          friendProfile,
+          presence,
+        };
+      })
+      .sort((a, b) => {
+        const rank = (s: 'online' | 'in_match' | 'offline') =>
+          s === 'online' ? 0 : s === 'in_match' ? 1 : 2;
+        const diff = rank(a.presence.status) - rank(b.presence.status);
+        if (diff !== 0) return diff;
+        return (b.friendProfile?.lastActiveMs || 0) - (a.friendProfile?.lastActiveMs || 0);
+      });
+  }, [acceptedFriends, profile.uid, profileLookup, presenceNowMs]);
+
+  const onlineFriendsCount = useMemo(
+    () => acceptedFriendsWithPresence.filter((e) => e.presence.isOnline).length,
+    [acceptedFriendsWithPresence]
+  );
 
   const unconnectedPlayers = useMemo(
     () => leaderboard.filter((p) => !connectedUids.has(p.uid)),
@@ -239,10 +276,11 @@ export function FriendsView() {
           </div>
           <button
             type="button"
+            disabled={signingIn}
             onClick={signInWithGoogle}
-            className="px-5 py-2.5 rounded-2xl font-display font-extrabold text-xs game-btn-blue cursor-pointer shrink-0"
+            className="px-5 py-2.5 rounded-2xl font-display font-extrabold text-xs game-btn-blue cursor-pointer shrink-0 disabled:opacity-60"
           >
-            Sign In with Google
+            {signingIn ? 'Signing in...' : 'Sign In with Google'}
           </button>
         </div>
       )}
@@ -466,6 +504,7 @@ export function FriendsView() {
           <div className="space-y-2.5">
             {incomingInvites.map((invite, idx) => {
               const badgeStyle = BADGE_COLORS[idx % BADGE_COLORS.length];
+              const remainingMs = getInviteRemainingMs(invite, presenceNowMs);
               return (
                 <div
                   key={invite.id}
@@ -478,8 +517,13 @@ export function FriendsView() {
                       {getInitials(invite.fromName)}
                     </div>
                     <div className="min-w-0">
-                      <div className="font-display text-sm sm:text-base font-extrabold text-[#111827] truncate">
-                        {invite.fromName} invited you
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-display text-sm sm:text-base font-extrabold text-[#111827] truncate">
+                          {invite.fromName} invited you
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-white/90 border border-[#111827] font-mono text-[10px] font-extrabold text-[#B45309] leading-none">
+                          Expires in {formatInviteCountdown(remainingMs)}
+                        </span>
                       </div>
                       <div className="font-mono text-xs text-[#334155] font-bold truncate">
                         {invite.roomCode} · {invite.seatsCount}/{invite.maxPlayers} seats · {invite.mode}
@@ -572,7 +616,8 @@ export function FriendsView() {
           <div className="flex items-center gap-2">
             <h2 className="font-display text-lg font-extrabold text-[#111827]">Your squad</h2>
             <span className="text-xs font-semibold text-[#64748B]">
-              {acceptedFriends.length} {acceptedFriends.length === 1 ? 'friend' : 'friends'}
+              {onlineFriendsCount} online · {acceptedFriendsWithPresence.length}{' '}
+              {acceptedFriendsWithPresence.length === 1 ? 'friend' : 'friends'}
             </span>
           </div>
           {isSignedIn && (
@@ -590,7 +635,7 @@ export function FriendsView() {
           )}
         </div>
 
-        {acceptedFriends.length === 0 ? (
+        {acceptedFriendsWithPresence.length === 0 ? (
           <div className="studio-card-soft rounded-3xl p-6 text-center space-y-2">
             <div className="w-11 h-11 rounded-2xl bg-[#EFF6FF] border-2 border-[#111827] mx-auto flex items-center justify-center">
               <Users className="w-5 h-5 text-[#1D4ED8]" />
@@ -617,32 +662,37 @@ export function FriendsView() {
           </div>
         ) : (
           <div className="space-y-2.5">
-            {acceptedFriends.map((f, idx) => {
-              const isRequester = f.requesterUid === profile.uid;
-              const friendUid = isRequester ? f.recipientUid : f.requesterUid;
-              const friendName = isRequester ? f.recipientName : f.requesterName;
-              const friendProfile = profileLookup.get(friendUid);
+            {acceptedFriendsWithPresence.map((entry, idx) => {
+              const { friendship, friendUid, friendName, friendProfile, presence } = entry;
               const winRate =
                 friendProfile && friendProfile.gamesPlayed > 0
                   ? Math.round((friendProfile.wins / friendProfile.gamesPlayed) * 100)
                   : null;
               const badgeStyle = BADGE_COLORS[(idx + 1) % BADGE_COLORS.length];
+              const dotClass =
+                presence.status === 'online'
+                  ? 'bg-[#10E587] animate-pulse'
+                  : presence.status === 'in_match'
+                    ? 'bg-[#F59E0B]'
+                    : 'bg-[#94A3B8]';
 
               return (
                 <div
-                  key={f.id}
+                  key={friendship.id}
                   className="studio-card-soft hover:border-[#111827] transition-colors rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative shrink-0">
                       <div
-                        className={`w-11 h-11 rounded-full border-2 border-[#111827] ${badgeStyle.bg} ${badgeStyle.text} font-display font-black text-sm flex items-center justify-center`}
+                        className={`w-11 h-11 rounded-full border-2 border-[#111827] ${badgeStyle.bg} ${badgeStyle.text} font-display font-black text-sm flex items-center justify-center ${
+                          presence.isOnline ? '' : 'opacity-65 grayscale-[35%]'
+                        }`}
                       >
                         {getInitials(friendName)}
                       </div>
                       <span
-                        className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#10E587] border-2 border-white animate-pulse"
-                        title="Ready to play"
+                        className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full ${dotClass} border-2 border-white`}
+                        title={presence.label}
                       />
                     </div>
 
@@ -651,7 +701,17 @@ export function FriendsView() {
                         {friendName}
                       </div>
                       <div className="text-xs text-[#64748B] truncate">
-                        Ready to roll
+                        <span
+                          className={
+                            presence.status === 'online'
+                              ? 'font-bold text-[#059669]'
+                              : presence.status === 'in_match'
+                                ? 'font-bold text-[#D97706]'
+                                : 'font-semibold text-[#94A3B8]'
+                          }
+                        >
+                          {presence.label}
+                        </span>
                         {winRate !== null ? ` · ${winRate}% win` : ''}
                         {friendProfile ? ` · ${friendProfile.elo} pts` : ''}
                       </div>
@@ -663,14 +723,25 @@ export function FriendsView() {
                       type="button"
                       disabled={busyUid === friendUid}
                       onClick={() => handleInviteFriend(friendUid, friendName)}
-                      className="px-4 py-1.5 rounded-xl font-display font-extrabold text-xs game-btn-white inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                      title={
+                        presence.isOnline
+                          ? `Invite ${friendName} to play`
+                          : `${friendName} is offline — invite auto-expires in 2 min`
+                      }
+                      className={`px-4 py-1.5 rounded-xl font-display font-extrabold text-xs inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60 ${
+                        presence.isOnline
+                          ? 'game-btn-white'
+                          : 'bg-[#F8FAFC] hover:bg-white text-[#64748B] border-2 border-[#CBD5E1]'
+                      }`}
                     >
-                      <Send className="w-3 h-3 text-[#1D4ED8]" />
+                      <Send
+                        className={`w-3 h-3 ${presence.isOnline ? 'text-[#1D4ED8]' : 'text-[#94A3B8]'}`}
+                      />
                       {busyUid === friendUid ? 'Sending...' : 'Invite'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => removeFriend(f.id)}
+                      onClick={() => removeFriend(friendship.id)}
                       className="p-2 rounded-xl text-[#94A3B8] hover:text-[#E11D48] hover:bg-[#FEE2E2] transition-colors cursor-pointer"
                       aria-label={`Remove ${friendName}`}
                       title="Remove friend"

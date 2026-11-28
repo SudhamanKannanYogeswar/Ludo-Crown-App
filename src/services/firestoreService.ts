@@ -29,7 +29,9 @@ import {
   LeagueTier,
   PlayerColor,
   PlayerProfile,
+  PresenceStatus,
   RoomDoc,
+  RoomInviteDoc,
   RoomSeat,
   TokenPositions,
   TournamentDoc,
@@ -76,7 +78,88 @@ export function createDefaultProfile(uid: string, rawName: string): PlayerProfil
     xp: 0,
     league: 'bronze',
     isPublic: true,
+    presenceStatus: 'online',
+    lastActiveMs: Date.now(),
   };
+}
+
+export const FRIEND_ONLINE_STALE_MS = 90_000;
+
+export interface PlayerPresenceInfo {
+  isOnline: boolean;
+  status: PresenceStatus;
+  label: string;
+  lastSeenText: string;
+}
+
+export function resolvePlayerPresence(
+  profile: PlayerProfile | undefined,
+  nowMs: number = Date.now()
+): PlayerPresenceInfo {
+  const lastActive =
+    typeof profile?.lastActiveMs === 'number' && Number.isFinite(profile.lastActiveMs)
+      ? profile.lastActiveMs
+      : 0;
+  const ageMs = lastActive > 0 ? Math.max(0, nowMs - lastActive) : Number.POSITIVE_INFINITY;
+  const isFresh = ageMs <= FRIEND_ONLINE_STALE_MS;
+
+  if (profile && profile.presenceStatus !== 'offline' && isFresh) {
+    if (profile.presenceStatus === 'in_match') {
+      return {
+        isOnline: true,
+        status: 'in_match',
+        label: 'In a match',
+        lastSeenText: 'In a match',
+      };
+    }
+    return {
+      isOnline: true,
+      status: 'online',
+      label: 'In lobby',
+      lastSeenText: 'Online now',
+    };
+  }
+
+  let lastSeenText = 'Offline';
+  if (lastActive > 0 && Number.isFinite(ageMs)) {
+    const mins = Math.floor(ageMs / 60_000);
+    if (mins < 1) {
+      lastSeenText = 'Offline · just now';
+    } else if (mins < 60) {
+      lastSeenText = `Offline · ${mins}m ago`;
+    } else {
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) {
+        lastSeenText = `Offline · ${hours}h ago`;
+      } else {
+        const days = Math.floor(hours / 24);
+        lastSeenText = `Offline · ${days}d ago`;
+      }
+    }
+  }
+
+  return {
+    isOnline: false,
+    status: 'offline',
+    label: lastSeenText,
+    lastSeenText,
+  };
+}
+
+export async function updateUserPresence(
+  uid: string,
+  presenceStatus: PresenceStatus
+): Promise<void> {
+  if (!uid) return;
+  try {
+    await updateDoc(doc(db, 'profiles', uid), {
+      presenceStatus,
+      lastActiveMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Best-effort heartbeat — never interrupt gameplay or sign-out if offline/transitioning
+  }
 }
 
 export function createDefaultWallet(uid: string): UserWallet {
@@ -150,7 +233,6 @@ export function subscribeProfile(
   uid: string,
   onData: (profile: PlayerProfile) => void
 ): Unsubscribe {
-  const path = `profiles/${uid}`;
   return onSnapshot(
     doc(db, 'profiles', uid),
     (snap) => {
@@ -159,7 +241,7 @@ export function subscribeProfile(
       }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      console.warn('Profile subscription warning:', error?.message || error);
     }
   );
 }
@@ -168,7 +250,6 @@ export function subscribeWallet(
   uid: string,
   onData: (wallet: UserWallet) => void
 ): Unsubscribe {
-  const path = `userWallets/${uid}`;
   return onSnapshot(
     doc(db, 'userWallets', uid),
     (snap) => {
@@ -177,7 +258,22 @@ export function subscribeWallet(
       }
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      console.warn('Wallet subscription warning:', error?.message || error);
+    }
+  );
+}
+
+export function subscribePublicProfiles(
+  onData: (profiles: PlayerProfile[]) => void
+): Unsubscribe {
+  const q = query(collection(db, 'profiles'), where('isPublic', '==', true), limit(80));
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(snap.docs.map((d) => d.data() as PlayerProfile));
+    },
+    (error) => {
+      console.warn('Public profiles subscription warning:', error?.message || error);
     }
   );
 }
@@ -594,6 +690,8 @@ export async function startMultiplayerRoom(room: RoomDoc, fillEmptyWithBots: boo
       lastActionText: clampString(`Match started! ${seats[0].name} rolls first.`, 120),
       updatedAt: serverTimestamp(),
     });
+    // Expire any pending outgoing invites sent for this waiting room now that the match started
+    expireOutgoingInvitesForRoom(latestRoom.hostUid, latestRoom.roomCode).catch(() => {});
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -739,7 +837,7 @@ export function subscribeUserActiveRooms(
       onData(active);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      console.warn('Active rooms subscription warning:', error?.message || error);
     }
   );
 }
@@ -749,6 +847,7 @@ export async function leaveWaitingRoom(room: RoomDoc, uid: string, playerName: s
   try {
     if (room.hostUid === uid && room.status === 'waiting') {
       await deleteDoc(doc(db, 'rooms', room.id));
+      expireOutgoingInvitesForRoom(uid, room.roomCode).catch(() => {});
     } else if (room.status === 'waiting' && room.playerUids.includes(uid)) {
       const nextUids = room.playerUids.filter((id) => id !== uid);
       const nextSeats = room.seats.filter((s) => s.uid !== uid);
@@ -758,6 +857,7 @@ export async function leaveWaitingRoom(room: RoomDoc, uid: string, playerName: s
         lastActionText: clampString(`${playerName} left the table.`, 120),
         updatedAt: serverTimestamp(),
       });
+      expireOutgoingInvitesForRoom(uid, room.roomCode).catch(() => {});
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
@@ -893,7 +993,7 @@ export function subscribeRoom(
       });
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+      console.warn(`Room subscription warning (${path}):`, error?.message || error);
     }
   );
 }
@@ -937,7 +1037,7 @@ export function subscribeRoomMessages(
       onMessages(msgs);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      console.warn(`Chat subscription warning (${path}):`, error?.message || error);
     }
   );
 }
@@ -1129,7 +1229,7 @@ export function subscribeFriendships(
       onData(list);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      console.warn(`Friendships subscription warning (${path}):`, error?.message || error);
     }
   );
 }
@@ -1208,39 +1308,92 @@ export async function removeFriendshipDoc(friendshipId: string): Promise<void> {
   }
 }
 
+export const ROOM_INVITE_TTL_MS = 2 * 60 * 1000;
+
+export function getInviteRemainingMs(invite: RoomInviteDoc, nowMs: number = Date.now()): number {
+  return Math.max(0, invite.createdAtMs + ROOM_INVITE_TTL_MS - nowMs);
+}
+
+export function formatInviteCountdown(remainingMs: number): string {
+  const totalSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+export async function deleteRoomInviteDoc(inviteId: string): Promise<void> {
+  if (!inviteId) return;
+  try {
+    await deleteDoc(doc(db, 'roomInvites', inviteId));
+  } catch {
+    // Benign if already removed or expired
+  }
+}
+
+export async function expireOutgoingInvitesForRoom(
+  fromUid: string,
+  roomCode: string
+): Promise<void> {
+  if (!fromUid || !roomCode) return;
+  try {
+    const q = query(collection(db, 'roomInvites'), where('fromUid', '==', fromUid), limit(30));
+    const snap = await getDocs(q);
+    const matching = snap.docs.filter((d) => {
+      const data = d.data();
+      return data.roomCode === roomCode && data.status === 'pending';
+    });
+    if (matching.length > 0) {
+      await Promise.allSettled(matching.map((d) => deleteDoc(doc(db, 'roomInvites', d.id))));
+    }
+  } catch {
+    // Best-effort cleanup of outgoing invites
+  }
+}
+
 export function subscribeIncomingRoomInvites(
   uid: string,
-  onData: (invites: import('../types').RoomInviteDoc[]) => void
+  onData: (invites: RoomInviteDoc[]) => void
 ): Unsubscribe {
   const path = 'roomInvites';
   const q = query(collection(db, 'roomInvites'), where('toUid', '==', uid), limit(30));
   return onSnapshot(
     q,
     (snap) => {
-      const invites = snap.docs
-        .map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            roomId: data.roomId,
-            roomCode: data.roomCode,
-            fromUid: data.fromUid,
-            fromName: data.fromName,
-            fromAvatarId: data.fromAvatarId,
-            toUid: data.toUid,
-            mode: data.mode,
-            maxPlayers: data.maxPlayers,
-            seatsCount: data.seatsCount,
-            status: data.status,
-            createdAtMs: data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now(),
-          } as import('../types').RoomInviteDoc;
-        })
-        .filter((inv) => inv.status === 'pending' && Date.now() - inv.createdAtMs < 1000 * 60 * 60 * 6);
-      invites.sort((a, b) => b.createdAtMs - a.createdAtMs);
-      onData(invites);
+      const now = Date.now();
+      const allMapped: RoomInviteDoc[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: d.id,
+          roomId: data.roomId,
+          roomCode: data.roomCode,
+          fromUid: data.fromUid,
+          fromName: data.fromName,
+          fromAvatarId: data.fromAvatarId,
+          toUid: data.toUid,
+          mode: data.mode,
+          maxPlayers: data.maxPlayers,
+          seatsCount: data.seatsCount,
+          status: data.status,
+          createdAtMs: data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : now,
+        };
+      });
+
+      const active: RoomInviteDoc[] = [];
+      for (const inv of allMapped) {
+        if (inv.status !== 'pending') continue;
+        if (now - inv.createdAtMs < ROOM_INVITE_TTL_MS) {
+          active.push(inv);
+        } else {
+          // Silently clean up expired invites so offline/stale invites never accumulate
+          deleteRoomInviteDoc(inv.id).catch(() => {});
+        }
+      }
+
+      active.sort((a, b) => b.createdAtMs - a.createdAtMs);
+      onData(active);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, path);
+      console.warn(`Room invites subscription warning (${path}):`, error?.message || error);
     }
   );
 }
@@ -1250,6 +1403,26 @@ export async function sendRoomInviteDoc(
   fromProfile: PlayerProfile,
   toUid: string
 ): Promise<string> {
+  // Replace any older pending invite from this host to this friend for the same room
+  try {
+    const q = query(collection(db, 'roomInvites'), where('fromUid', '==', fromProfile.uid), limit(30));
+    const snap = await getDocs(q);
+    const stale = snap.docs.filter((d) => {
+      const data = d.data();
+      const createdAtMs = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : 0;
+      const isExpired = createdAtMs > 0 && Date.now() - createdAtMs >= ROOM_INVITE_TTL_MS;
+      return (
+        data.status === 'pending' &&
+        (isExpired || (data.toUid === toUid && data.roomCode === room.roomCode))
+      );
+    });
+    if (stale.length > 0) {
+      await Promise.allSettled(stale.map((d) => deleteDoc(doc(db, 'roomInvites', d.id))));
+    }
+  } catch {
+    // Non-blocking pre-cleanup
+  }
+
   const inviteId = generateDocId('inv');
   const path = `roomInvites/${inviteId}`;
   try {
@@ -1314,6 +1487,47 @@ export async function savePushSubscriptionDoc(
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
+}
+
+export async function deleteUserAccountDocs(uid: string): Promise<void> {
+  if (!uid) return;
+
+  // Clean up any waiting rooms hosted by this user first
+  await cleanupOwnStaleWaitingRooms(uid);
+
+  // Best-effort removal of user's friendships and room invites
+  try {
+    const friendsSnap = await getDocs(
+      query(collection(db, 'friendships'), where('pairUids', 'array-contains', uid), limit(60))
+    );
+    if (friendsSnap.docs.length > 0) {
+      await Promise.allSettled(friendsSnap.docs.map((d) => deleteDoc(doc(db, 'friendships', d.id))));
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+
+  try {
+    const sentInvites = await getDocs(
+      query(collection(db, 'roomInvites'), where('fromUid', '==', uid), limit(40))
+    );
+    const recvInvites = await getDocs(
+      query(collection(db, 'roomInvites'), where('toUid', '==', uid), limit(40))
+    );
+    const allInvites = [...sentInvites.docs, ...recvInvites.docs];
+    if (allInvites.length > 0) {
+      await Promise.allSettled(allInvites.map((d) => deleteDoc(doc(db, 'roomInvites', d.id))));
+    }
+  } catch {
+    // Best-effort cleanup
+  }
+
+  // Delete core account documents (owner-only Firestore rules enforced)
+  await Promise.allSettled([
+    deleteDoc(doc(db, 'pushSubscriptions', uid)),
+    deleteDoc(doc(db, 'userWallets', uid)),
+    deleteDoc(doc(db, 'profiles', uid)),
+  ]);
 }
 
 

@@ -21,6 +21,7 @@ export function TournamentsView() {
     registerForTournament,
     triggerRewardedAd,
     launchOfflinePractice,
+    signingIn,
     signInWithGoogle,
     showToast,
   } = useApp();
@@ -394,10 +395,11 @@ export function TournamentsView() {
           </p>
           <button
             type="button"
+            disabled={signingIn}
             onClick={signInWithGoogle}
-            className="mt-5 px-6 py-3 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer"
+            className="mt-5 px-6 py-3 rounded-2xl font-display font-extrabold text-sm game-btn-blue cursor-pointer disabled:opacity-60"
           >
-            Sign In with Google
+            {signingIn ? 'Signing in...' : 'Sign In with Google'}
           </button>
         </div>
       ) : (

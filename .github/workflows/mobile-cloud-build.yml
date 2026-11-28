@@ -44,6 +44,7 @@ jobs:
       - name: Verify TypeScript types & build production web bundle
         env:
           VITE_ADMOB_ANDROID_INTERSTITIAL_ID: ${{ secrets.ADMOB_ANDROID_INTERSTITIAL_ID }}
+          VITE_GA_MEASUREMENT_ID: ${{ secrets.VITE_GA_MEASUREMENT_ID }}
         run: |
           npm run lint
           npm run build
@@ -83,9 +84,11 @@ jobs:
           REPORT_SHA1=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log((r.sha1List||[]).join(', '));" 2>/dev/null || true)
           REPORT_WEB=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.hasWebClient ? 'true' : 'false');" 2>/dev/null || echo "false")
           REPORT_PKG=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.packageMatched ? 'true' : 'false');" 2>/dev/null || echo "false")
+          REPORT_APP_ID=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.mobileSdkAppId || '');" 2>/dev/null || true)
           echo "gs_sha1=$REPORT_SHA1" >> "$GITHUB_OUTPUT"
           echo "gs_web_client=$REPORT_WEB" >> "$GITHUB_OUTPUT"
           echo "gs_pkg_matched=$REPORT_PKG" >> "$GITHUB_OUTPUT"
+          echo "gs_app_id=$REPORT_APP_ID" >> "$GITHUB_OUTPUT"
 
       - name: Build installable Android APK (Debug)
         working-directory: android
@@ -156,8 +159,10 @@ jobs:
             fi
             if [ "${{ steps.android_config.outputs.has_google_services }}" = "true" ]; then
               echo "| Native Google Sign-In | Enabled | Package matched=${{ steps.android_config.outputs.gs_pkg_matched }}, Web OAuth=${{ steps.android_config.outputs.gs_web_client }} |"
+              echo "| Firebase / Google Analytics | Enabled | Native SDK bundled via \`@capacitor-firebase/analytics\` · Firebase App ID \`${{ steps.android_config.outputs.gs_app_id }}\` |"
             else
               echo "| Native Google Sign-In | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
+              echo "| Firebase / Google Analytics | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret so Android Analytics connects to GA4 |"
             fi
             if [ "${{ steps.signed_release.outputs.built }}" = "true" ]; then
               echo "| Play Store Bundle & APK | Signed | Download \`LudoCrown-PlayStore-Signed-Release\`: upload \`app-release.aab\` to Play Console & test \`app-release.apk\` on phone |"

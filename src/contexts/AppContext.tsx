@@ -3,6 +3,8 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import {
   auth,
+  deleteCurrentAuthUser,
+  formatGoogleSignInError,
   isCapacitorNativeApp,
   signInWithGoogleAuto,
   signOutGoogleAuto,
@@ -33,6 +35,13 @@ import {
   syncNativeBannerVisibility,
 } from '../services/adMobService';
 import {
+  initAnalytics,
+  resetAnalyticsData,
+  setAnalyticsUser,
+  trackAnalyticsEvent,
+  trackScreenView,
+} from '../services/analyticsService';
+import {
   getNotificationPermissionState,
   getStoredFcmToken,
   loadNotificationPrefs,
@@ -54,16 +63,20 @@ import {
   createDefaultWallet,
   createMultiplayerRoom,
   createTournament,
+  deleteRoomInviteDoc,
+  deleteUserAccountDocs,
   ensureUserDocs,
   fetchPublicLeaderboard,
   fetchPublicTournaments,
   findOrCreateQuickMatch,
   forfeitActiveRoomDoc,
+  getInviteRemainingMs,
   joinRoomByCode,
   joinTournamentDoc,
   leaveWaitingRoom,
   listOpenPublicRooms,
   removeFriendshipDoc,
+  resolvePlayerPresence,
   respondToRoomInviteDoc,
   savePushSubscriptionDoc,
   sendFriendRequestDoc,
@@ -73,6 +86,7 @@ import {
   subscribeFriendships,
   subscribeIncomingRoomInvites,
   subscribeProfile,
+  subscribePublicProfiles,
   subscribeRoom,
   subscribeRoomMessages,
   subscribeUserActiveRooms,
@@ -82,6 +96,7 @@ import {
   updateProfileCustomization,
   updateProfileStats,
   updateRoomSeatPresence,
+  updateUserPresence,
   updateWalletAdReward,
   updateWalletEconomy,
   updateWalletRewardsAndChallenges,
@@ -150,7 +165,9 @@ export interface ActiveMatchConflict {
 interface AppContextValue {
   user: User | null;
   authReady: boolean;
+  signingIn: boolean;
   isSignedIn: boolean;
+  presenceNowMs: number;
   profile: PlayerProfile;
   wallet: UserWallet;
   activeTab: ActiveTab;
@@ -162,6 +179,8 @@ interface AppContextValue {
   cycleBackdropTheme: () => void;
   signInWithGoogle: () => Promise<void>;
   signOutUser: () => Promise<void>;
+  deleteAccountAndData: () => Promise<{ ok: boolean; requiresRecentLogin?: boolean; message: string }>;
+  resetGuestLocalData: () => void;
   // Profile & Cosmetics
   saveCustomization: (
     updates: Pick<PlayerProfile, 'displayName' | 'avatarId' | 'avatarFrame' | 'boardTheme' | 'diceTheme'>
@@ -290,6 +309,8 @@ function loadGuestWallet(): UserWallet {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
+  const [userDocsReadyUid, setUserDocsReadyUid] = useState<string | null>(null);
   const [profile, setProfile] = useState<PlayerProfile>(() => loadGuestProfile());
   const [wallet, setWallet] = useState<UserWallet>(() => loadGuestWallet());
   const [activeTab, setActiveTab] = useState<ActiveTab>('lobby');
@@ -350,7 +371,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [leaderboard, setLeaderboard] = useState<PlayerProfile[]>([]);
   const [tournaments, setTournaments] = useState<TournamentDoc[]>([]);
   const [friendships, setFriendships] = useState<FriendshipDoc[]>([]);
-  const [incomingInvites, setIncomingInvites] = useState<RoomInviteDoc[]>([]);
+  const [rawIncomingInvites, setRawIncomingInvites] = useState<RoomInviteDoc[]>([]);
+  const [presenceNowMs, setPresenceNowMs] = useState<number>(() => Date.now());
+  const cleanedExpiredInviteIdsRef = React.useRef<Set<string>>(new Set());
   const seenInviteIdsRef = React.useRef<Set<string>>(new Set());
   const seenFriendStatusRef = React.useRef<Map<string, string>>(new Map());
   const friendsInitializedRef = React.useRef<boolean>(false);
@@ -398,40 +421,108 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, profile, wallet]);
 
+  // Live clock for friend online/offline staleness & incoming invite countdowns
+  useEffect(() => {
+    const tickMs = rawIncomingInvites.length > 0 ? 1000 : 15_000;
+    const interval = setInterval(() => {
+      setPresenceNowMs(Date.now());
+    }, tickMs);
+    return () => clearInterval(interval);
+  }, [rawIncomingInvites.length]);
+
+  // Filter incoming invites live by 2-minute TTL and clean up expired invites automatically
+  const incomingInvites = useMemo(
+    () => rawIncomingInvites.filter((inv) => getInviteRemainingMs(inv, presenceNowMs) > 0),
+    [rawIncomingInvites, presenceNowMs]
+  );
+
+  useEffect(() => {
+    if (!user || rawIncomingInvites.length === 0) return;
+    for (const inv of rawIncomingInvites) {
+      if (
+        getInviteRemainingMs(inv, presenceNowMs) <= 0 &&
+        !cleanedExpiredInviteIdsRef.current.has(inv.id)
+      ) {
+        cleanedExpiredInviteIdsRef.current.add(inv.id);
+        deleteRoomInviteDoc(inv.id).catch(() => {});
+      }
+    }
+  }, [user, rawIncomingInvites, presenceNowMs]);
+
   // Startup Firestore connectivity test + Auth state listener
   useEffect(() => {
     testConnection();
+    let cancelled = false;
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (cancelled) return;
       setUser(firebaseUser);
       if (firebaseUser) {
-        try {
-          const { profile: p, wallet: w } = await ensureUserDocs(
-            firebaseUser.uid,
-            firebaseUser.displayName || 'Club Player'
+        if (firebaseUser.emailVerified === false) {
+          showToast(
+            'Your Google account email is not verified yet. Please verify it to enable cloud saves & online tables.',
+            'error'
           );
-          setProfile(p);
-          setWallet(w);
-        } catch (err) {
-          console.error(err);
-          showToast('Signed in, syncing profile...', 'info');
+        }
+
+        let synced = false;
+        const retryDelays = [0, 450, 1200];
+        for (let attempt = 0; attempt < retryDelays.length; attempt++) {
+          if (cancelled) return;
+          if (retryDelays[attempt] > 0) {
+            await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+            if (cancelled) return;
+          }
+          try {
+            // Attach fresh ID token (force-refresh on retry to resolve cold token propagation)
+            await firebaseUser.getIdToken(attempt > 0).catch(() => {});
+            const { profile: p, wallet: w } = await ensureUserDocs(
+              firebaseUser.uid,
+              firebaseUser.displayName || 'Club Player'
+            );
+            if (cancelled) return;
+            setProfile(p);
+            setWallet(w);
+            setUserDocsReadyUid(firebaseUser.uid);
+            synced = true;
+            break;
+          } catch (err) {
+            if (attempt === retryDelays.length - 1) {
+              console.error('Sign-in profile sync error:', err);
+            }
+          }
+        }
+
+        if (!synced && !cancelled) {
+          // Still unblock subscriptions so existing docs can sync once connectivity stabilizes
+          setUserDocsReadyUid(firebaseUser.uid);
+          showToast('Signed in — finishing cloud profile sync...', 'info');
         }
       } else {
+        setUserDocsReadyUid(null);
         setProfile(loadGuestProfile());
         setWallet(loadGuestWallet());
         setActiveRoomId(null);
         setActiveRoom(null);
         setMyActiveRooms([]);
         setRoomMessages([]);
+        setRawIncomingInvites([]);
+        setFriendships([]);
         notifiedActiveRoomIdsRef.current.clear();
+        cleanedExpiredInviteIdsRef.current.clear();
       }
-      setAuthReady(true);
+      if (!cancelled) {
+        setAuthReady(true);
+      }
     });
-    return () => unsubAuth();
+    return () => {
+      cancelled = true;
+      unsubAuth();
+    };
   }, [showToast]);
 
-  // Real-time Profile & Wallet subscriptions when signed in
+  // Real-time Profile, Wallet, Friends, Public Presence, Invites & Active Rooms subscriptions
   useEffect(() => {
-    if (!user) return;
+    if (!user || userDocsReadyUid !== user.uid) return;
     const unsubProfile = subscribeProfile(user.uid, (p) => setProfile(p));
     const unsubWallet = subscribeWallet(user.uid, (w) => {
       const today = getTodayDateString();
@@ -447,6 +538,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }).catch(() => {});
       }
       setWallet(w);
+    });
+    const unsubPublicProfiles = subscribePublicProfiles((rows) => {
+      setLeaderboard(rows);
     });
     friendsInitializedRef.current = false;
     seenFriendStatusRef.current.clear();
@@ -489,7 +583,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setFriendships(items);
     });
     const unsubInvites = subscribeIncomingRoomInvites(user.uid, (invites) => {
-      setIncomingInvites(invites);
+      setRawIncomingInvites(invites);
+      setPresenceNowMs(Date.now());
       for (const inv of invites) {
         if (!seenInviteIdsRef.current.has(inv.id)) {
           seenInviteIdsRef.current.add(inv.id);
@@ -526,19 +621,78 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // Pre-fetch public players for Friends & Ranks
-    fetchPublicLeaderboard()
-      .then((rows) => setLeaderboard(rows))
-      .catch(() => {});
-
     return () => {
       unsubProfile();
       unsubWallet();
+      unsubPublicProfiles();
       unsubFriends();
       unsubInvites();
       unsubMyActiveRooms();
     };
-  }, [user, showToast]);
+  }, [user, userDocsReadyUid, showToast]);
+
+  // Global Real-Time Friend Presence Heartbeat (online / in_match / offline)
+  const desiredPresenceStatus =
+    activeTab === 'play' && (activeRoom?.status === 'playing' || Boolean(offlineMatch))
+      ? 'in_match'
+      : 'online';
+
+  useEffect(() => {
+    if (!user || userDocsReadyUid !== user.uid || !networkOnline) return;
+    const uid = user.uid;
+
+    const sendOnlineHeartbeat = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      updateUserPresence(uid, desiredPresenceStatus);
+    };
+
+    const sendOfflineMark = () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      updateUserPresence(uid, 'offline');
+    };
+
+    sendOnlineHeartbeat();
+    const interval = setInterval(sendOnlineHeartbeat, 40_000);
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        sendOfflineMark();
+      } else {
+        sendOnlineHeartbeat();
+      }
+    };
+    const handleUnload = () => {
+      sendOfflineMark();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', handleUnload);
+    window.addEventListener('beforeunload', handleUnload);
+
+    let capacitorPresenceHandle: { remove: () => Promise<void> } | null = null;
+    if (isCapacitorNativeApp()) {
+      CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          sendOnlineHeartbeat();
+        } else {
+          sendOfflineMark();
+        }
+      })
+        .then((handle) => {
+          capacitorPresenceHandle = handle;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('beforeunload', handleUnload);
+      capacitorPresenceHandle?.remove().catch(() => {});
+    };
+  }, [user, userDocsReadyUid, networkOnline, desiredPresenceStatus]);
 
   // Track browser/mobile network connectivity & automatic reconnection
   useEffect(() => {
@@ -973,8 +1127,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, [user, activeRoom?.id, activeRoom?.visibility]);
 
-  // Warm up native AdMob SDK, pre-warm rewarded & interstitial ads, & inspect notification permission once on mount
+  // Warm up native AdMob SDK, Firebase Analytics, pre-warm rewarded & interstitial ads, & inspect notification permission once on mount
   useEffect(() => {
+    initAnalytics();
     initNativeAdMob();
     preloadNativeRewardedAd();
     preloadNativeInterstitialAd();
@@ -982,6 +1137,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .then((perm) => setNotificationPermission(perm))
       .catch(() => {});
   }, []);
+
+  // Track active tab screen views in Google / Firebase Analytics
+  useEffect(() => {
+    trackScreenView(activeTab);
+  }, [activeTab]);
+
+  // Sync non-PII analytics user ID & tier properties
+  useEffect(() => {
+    if (!authReady) return;
+    setAnalyticsUser(user?.uid || null, {
+      league: profile.league,
+      isGuest: !user,
+    });
+  }, [authReady, user, profile.league]);
 
   // Automatically create Android FCM channel & refresh token when permission is already granted
   useEffect(() => {
@@ -1043,48 +1212,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    setSigningIn(true);
     try {
       await signInWithGoogleAuto();
+      trackAnalyticsEvent('login', { method: 'google' });
       showToast('Signed in with Google. Online play & cloud sync enabled.', 'success');
     } catch (err) {
-      const rawMsg = err instanceof Error ? err.message : String(err ?? '');
-      const lower = rawMsg.toLowerCase();
-      if (
-        lower.includes('popup-closed-by-user') ||
-        lower.includes('cancel') ||
-        lower.includes('12501') ||
-        lower.includes('dismissed')
-      ) {
-        return;
-      }
-
-      if (isCapacitorNativeApp()) {
-        if (
-          lower.includes('default_web_client_id') ||
-          lower.includes('developer_error') ||
-          lower.includes('statuscode=10') ||
-          lower.includes('apiexception: 10') ||
-          rawMsg === 'NATIVE_AUTH_NO_ID_TOKEN'
-        ) {
-          showToast(
-            `Google Sign-In config error (${rawMsg || 'code 10'}). Check SHA-1 in Firebase Console & re-download google-services.json.`,
-            'error'
-          );
-          return;
-        }
-        showToast(
-          `Google Sign-In error: ${rawMsg || 'Please check internet connection and try again.'}`,
-          'error'
-        );
-        return;
-      }
-
-      showToast('Unable to complete Google Sign-In. Please allow popups and try again.', 'error');
+      const formatted = formatGoogleSignInError(err);
+      if (formatted.silent) return;
+      console.error('Google Sign-In failed:', err);
+      showToast(formatted.message, 'error');
+    } finally {
+      setSigningIn(false);
     }
   }, [showToast]);
 
   const signOutUser = useCallback(async () => {
     try {
+      if (user) {
+        await updateUserPresence(user.uid, 'offline');
+      }
       await signOutGoogleAuto();
       setActiveRoomId(null);
       setActiveRoom(null);
@@ -1092,7 +1239,81 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       showToast('Could not sign out right now.', 'error');
     }
-  }, [showToast]);
+  }, [user, showToast]);
+
+  const resetGuestLocalData = useCallback(() => {
+    try {
+      localStorage.removeItem(GUEST_PROFILE_KEY);
+      localStorage.removeItem(GUEST_WALLET_KEY);
+      localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+      localStorage.removeItem(BACKDROP_THEME_KEY);
+    } catch {
+      // ignore storage errors
+    }
+    if (!user) {
+      setProfile(createDefaultProfile('guest_local', 'Guest Strategist'));
+      setWallet(createDefaultWallet('guest_local'));
+    }
+    setBackdropThemeIdState(BACKDROP_THEMES[0].id);
+    showToast('Local guest data cleared on this device.', 'success');
+  }, [user, showToast]);
+
+  const deleteAccountAndData = useCallback(async (): Promise<{
+    ok: boolean;
+    requiresRecentLogin?: boolean;
+    message: string;
+  }> => {
+    if (!user) {
+      resetGuestLocalData();
+      return { ok: true, message: 'Local guest data cleared.' };
+    }
+    const uid = user.uid;
+    try {
+      // Forfeit or leave any active rooms first so other players aren't blocked
+      for (const room of myActiveRooms) {
+        await forfeitActiveRoomDoc(room, uid, profile.displayName).catch(() => {});
+      }
+      await deleteUserAccountDocs(uid);
+      await deleteCurrentAuthUser();
+      resetAnalyticsData();
+      try {
+        localStorage.removeItem(GUEST_PROFILE_KEY);
+        localStorage.removeItem(GUEST_WALLET_KEY);
+        localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+      } catch {
+        // ignore storage errors
+      }
+      setActiveRoomId(null);
+      setActiveRoom(null);
+      setMyActiveRooms([]);
+      setActiveTab('lobby');
+      showToast('Your account and cloud data have been permanently deleted.', 'info');
+      return {
+        ok: true,
+        message: 'Your Ludo Crown account and cloud data have been permanently deleted.',
+      };
+    } catch (err) {
+      const code = String((err as { code?: string } | null)?.code || '').toLowerCase();
+      if (code === 'auth/requires-recent-login') {
+        showToast(
+          'For security, please sign out and sign back in with Google before deleting your account.',
+          'error'
+        );
+        return {
+          ok: false,
+          requiresRecentLogin: true,
+          message:
+            'For security, Google requires a fresh sign-in before deleting an account. Please sign out, sign back in, and try again.',
+        };
+      }
+      console.error('Account deletion error:', err);
+      showToast('Could not complete account deletion right now. Please check your connection and retry.', 'error');
+      return {
+        ok: false,
+        message: 'Could not complete account deletion right now. Please check your internet connection and retry.',
+      };
+    }
+  }, [user, myActiveRooms, profile.displayName, resetGuestLocalData, showToast]);
 
   const saveCustomization = useCallback(
     async (
@@ -1142,6 +1363,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           freeTournamentTickets: nextWallet.freeTournamentTickets,
         });
       }
+      trackAnalyticsEvent('cosmetic_unlock', { item_id: itemId, currency, price });
       showToast('Cosmetic unlocked and added to your atelier!', 'success');
       return true;
     },
@@ -1199,6 +1421,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...(unlockedCosmetics !== wallet.unlockedCosmetics ? { unlockedCosmetics } : {}),
       });
     }
+    trackAnalyticsEvent('daily_streak_claim', {
+      streak_day: nextStreak,
+      coins: reward.coins,
+      gems: reward.gems + bonusGems,
+    });
     showToast(
       extraNote
         ? `Day 7 Grand Reward! +${reward.coins} Coins, +${reward.gems} Gems${extraNote}`
@@ -1302,6 +1529,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (summary: MatchSummary) => {
       if (summary.autoPlayForfeitedRewards) {
         setMatchesSinceLastInterstitial((c) => c + 1);
+        trackAnalyticsEvent('match_complete', {
+          won: summary.won,
+          turns: summary.turnsPlayed,
+          auto_play: true,
+        });
         showToast('No rewards earned — match completed in Auto-Play mode.', 'info');
         return;
       }
@@ -1350,6 +1582,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
       setWallet(nextWallet);
       setMatchesSinceLastInterstitial((c) => c + 1);
+      trackAnalyticsEvent('match_complete', {
+        won: summary.won,
+        turns: summary.turnsPlayed,
+        captures: summary.capturesByPlayer,
+        sixes: summary.sixesByPlayer,
+        coins_earned: summary.coinsEarned,
+        is_tournament: Boolean(summary.isTournament),
+        auto_play: false,
+      });
 
       if (user) {
         await updateProfileStats(user.uid, nextProfile);
@@ -1994,7 +2235,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }
           await sendRoomInviteDoc(targetRoom, effectiveProfile, friendUid);
           tabletopAudio.playTokenMove();
-          showToast(`Table invite (${targetRoom.roomCode}) sent to ${friendName}!`, 'success');
+          const targetProfile = leaderboard.find((p) => p.uid === friendUid);
+          const friendPresence = resolvePlayerPresence(targetProfile, Date.now());
+          if (!friendPresence.isOnline) {
+            showToast(
+              `Invite sent to ${friendName} (currently offline) — auto-expires in 2 min.`,
+              'info'
+            );
+          } else if (friendPresence.status === 'in_match') {
+            showToast(
+              `Invite sent to ${friendName} (in a match) — expires in 2 min.`,
+              'info'
+            );
+          } else {
+            showToast(`Table invite (${targetRoom.roomCode}) sent to ${friendName}!`, 'success');
+          }
         } catch (err) {
           showToast(err instanceof Error ? err.message : 'Could not send table invite.', 'error');
         }
@@ -2006,7 +2261,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       await run();
     },
-    [user, activeRoom, profile, showToast, guardSingleActiveMatch]
+    [user, activeRoom, profile, leaderboard, showToast, guardSingleActiveMatch]
   );
 
   const acceptRoomInvite = useCallback(
@@ -2015,18 +2270,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to accept table invites.', 'info');
         return;
       }
+      if (getInviteRemainingMs(invite, Date.now()) <= 0) {
+        await deleteRoomInviteDoc(invite.id).catch(() => {});
+        showToast('This table invite has expired.', 'info');
+        return;
+      }
       const run = async () => {
         try {
           const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
-          await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
           const room = await joinRoomByCode(invite.roomCode, effectiveProfile);
+          await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
           setOfflineMatch(null);
           setActiveRoomId(room.id);
           setActiveTab('play');
           tabletopAudio.playSafeStar();
           showToast(`Joined ${invite.fromName}'s table (${room.roomCode})!`, 'success');
         } catch (err) {
-          showToast(err instanceof Error ? err.message : 'This table is no longer open.', 'error');
+          // Room already started, closed, or full — clear stale invite cleanly
+          await deleteRoomInviteDoc(invite.id).catch(() => {});
+          showToast(
+            err instanceof Error
+              ? err.message
+              : 'This table invite has expired or the match already started.',
+            'error'
+          );
         }
       };
       if (guardSingleActiveMatch(`Join ${invite.fromName}'s Table`, run, invite.roomCode)) {
@@ -2040,7 +2307,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const declineRoomInvite = useCallback(
     async (inviteId: string) => {
       if (!user) return;
-      await respondToRoomInviteDoc(inviteId, 'declined').catch(() => {});
+      await deleteRoomInviteDoc(inviteId).catch(() => {});
     },
     [user]
   );
@@ -2180,6 +2447,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showNativeRewardedAd(placementId)
           .then((res) => {
             if (res?.earned) {
+              trackAnalyticsEvent('ad_reward_earned', {
+                placement_id: placementId,
+                coins: bonusCoins,
+                gems: bonusGems,
+                tickets: bonusTickets,
+              });
               creditAdQuotaAndGrant(bonusCoins, bonusGems, bonusTickets, onRewardEarned);
             } else if (res?.error) {
               showToast('No video ad ready right now. Please try again shortly.', 'info');
@@ -2201,6 +2474,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         durationSeconds: spec.durationSeconds,
         onComplete: () => {
           setAdModal(null);
+          trackAnalyticsEvent('ad_reward_earned', {
+            placement_id: placementId,
+            coins: bonusCoins,
+            gems: bonusGems,
+            tickets: bonusTickets,
+          });
           creditAdQuotaAndGrant(bonusCoins, bonusGems, bonusTickets, onRewardEarned);
         },
         onDismiss: () => setAdModal(null),
@@ -2257,7 +2536,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     () => ({
       user,
       authReady,
+      signingIn,
       isSignedIn: Boolean(user),
+      presenceNowMs,
       profile,
       wallet,
       activeTab,
@@ -2269,6 +2550,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cycleBackdropTheme,
       signInWithGoogle,
       signOutUser,
+      deleteAccountAndData,
+      resetGuestLocalData,
       saveCustomization,
       purchaseCosmetic,
       claimDailyStreak,
@@ -2333,6 +2616,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [
       user,
       authReady,
+      signingIn,
+      presenceNowMs,
       profile,
       wallet,
       activeTab,
@@ -2343,6 +2628,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       cycleBackdropTheme,
       signInWithGoogle,
       signOutUser,
+      deleteAccountAndData,
+      resetGuestLocalData,
       saveCustomization,
       purchaseCosmetic,
       claimDailyStreak,

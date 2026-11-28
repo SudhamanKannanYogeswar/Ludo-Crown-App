@@ -56,6 +56,7 @@ function LudoCrownShell() {
     confirmExitAndStartNewMatch,
     rejoinActiveRoom,
     offlineMatch,
+    signingIn,
     signInWithGoogle,
     signOutUser,
     toast,
@@ -193,10 +194,11 @@ function LudoCrownShell() {
               ) : (
                 <button
                   type="button"
+                  disabled={signingIn}
                   onClick={signInWithGoogle}
-                  className="px-2.5 sm:px-3 py-1.5 rounded-xl font-display font-extrabold text-[11px] sm:text-xs game-btn-blue whitespace-nowrap cursor-pointer"
+                  className="px-2.5 sm:px-3 py-1.5 rounded-xl font-display font-extrabold text-[11px] sm:text-xs game-btn-blue whitespace-nowrap cursor-pointer disabled:opacity-60"
                 >
-                  Sign In
+                  {signingIn ? 'Signing in...' : 'Sign In'}
                 </button>
               )}
             </div>
@@ -245,7 +247,7 @@ function LudoCrownShell() {
         {activeTab === 'tournaments' && <TournamentsView />}
         {activeTab === 'leaderboard' && <LeaderboardView />}
         {activeTab === 'rewards' && <RewardsView />}
-        {activeTab === 'atelier' && <AtelierView />}
+        {activeTab === 'atelier' && <AtelierView onOpenAdPolicy={() => setPolicyOpen(true)} />}
       </main>
 
       {!isPlaying && (

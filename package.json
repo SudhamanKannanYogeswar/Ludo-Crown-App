@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@capacitor-community/admob": "6",
+    "@capacitor-firebase/analytics": "6",
     "@capacitor-firebase/authentication": "6",
     "@capacitor/app": "6",
     "@capacitor/core": "6",

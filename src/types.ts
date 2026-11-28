@@ -15,6 +15,8 @@ export type ActiveTab =
   | 'rewards'
   | 'atelier';
 
+export type PresenceStatus = 'online' | 'in_match' | 'offline';
+
 export interface PlayerProfile {
   uid: string;
   displayName: string;
@@ -34,6 +36,8 @@ export interface PlayerProfile {
   xp: number;
   league: LeagueTier;
   isPublic: boolean;
+  presenceStatus?: PresenceStatus;
+  lastActiveMs?: number;
 }
 
 export interface ChallengeProgressMap {
