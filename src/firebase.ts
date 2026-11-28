@@ -48,36 +48,132 @@ export function isCapacitorNativeApp(): boolean {
 const SIGN_IN_WATCHDOG_MS = 75_000;
 let activeSignInPromise: Promise<User | null> | null = null;
 
+function isUserCancelledSignIn(err: unknown): boolean {
+  const errObj = err as { code?: string; message?: string } | null;
+  const code = String(errObj?.code || '').toLowerCase();
+  const rawMsg = err instanceof Error ? err.message : String(errObj?.message || err || '');
+  const lower = `${code} ${rawMsg}`.toLowerCase();
+  return (
+    code === 'auth/popup-closed-by-user' ||
+    code === 'auth/cancelled-popup-request' ||
+    lower.includes('popup-closed-by-user') ||
+    lower.includes('cancelled-popup-request') ||
+    lower.includes('12501') ||
+    lower.includes('user cancelled') ||
+    lower.includes('user canceled') ||
+    lower.includes('canceled by the user') ||
+    lower.includes('cancelled by the user') ||
+    lower.includes('canceled') ||
+    lower.includes('dismissed')
+  );
+}
+
+function isAndroidSignInDeveloperError(err: unknown): boolean {
+  const errObj = err as { code?: string; message?: string } | null;
+  const code = String(errObj?.code || '').trim().toLowerCase();
+  const rawMsg = err instanceof Error ? err.message : String(errObj?.message || err || '');
+  const lower = `${code} ${rawMsg}`.toLowerCase();
+
+  if (
+    code === '10' ||
+    rawMsg === 'NATIVE_AUTH_NO_ID_TOKEN' ||
+    lower.includes('default_web_client_id') ||
+    lower.includes('will_be_overridden') ||
+    lower.includes('developer_error') ||
+    lower.includes('statuscode=10') ||
+    lower.includes('apiexception: 10') ||
+    lower.includes('12500')
+  ) {
+    return true;
+  }
+
+  // Android GoogleSignIn ApiException.getMessage() often returns just "10: " or "10:"
+  return /(?:^|[\s(:=])10(?:\s*:|$)/.test(rawMsg.trim());
+}
+
+async function finishFirebaseSignInFromTokens(
+  idToken: string | null,
+  accessToken: string | null
+): Promise<User> {
+  if (!idToken && !accessToken) {
+    throw new Error('NATIVE_AUTH_NO_ID_TOKEN');
+  }
+  const credential = GoogleAuthProvider.credential(idToken, accessToken);
+  const userCred = await signInWithCredential(auth, credential);
+  try {
+    await userCred.user.getIdToken();
+  } catch {
+    // Proceed with freshly minted credential
+  }
+  return userCred.user;
+}
+
+async function performNativeGoogleWebFallback(): Promise<User> {
+  const result = await FirebaseAuthentication.signInWithOpenIdConnect({
+    providerId: 'google.com',
+    scopes: ['email', 'profile'],
+    customParameters: [{ key: 'prompt', value: 'select_account' }],
+  });
+  const idToken = result?.credential?.idToken || null;
+  const accessToken = result?.credential?.accessToken || null;
+  return finishFirebaseSignInFromTokens(idToken, accessToken);
+}
+
 async function performNativeGoogleSignIn(): Promise<User> {
-  const attempt = async (): Promise<User> => {
+  const attemptNativeSheet = async (): Promise<User> => {
     const result = await FirebaseAuthentication.signInWithGoogle();
     const idToken = result?.credential?.idToken || null;
     const accessToken = result?.credential?.accessToken || null;
-
-    if (!idToken && !accessToken) {
-      throw new Error('NATIVE_AUTH_NO_ID_TOKEN');
-    }
-
-    const credential = GoogleAuthProvider.credential(idToken, accessToken);
-    const userCred = await signInWithCredential(auth, credential);
-    try {
-      await userCred.user.getIdToken();
-    } catch {
-      // Proceed with freshly minted credential
-    }
-    return userCred.user;
+    return finishFirebaseSignInFromTokens(idToken, accessToken);
   };
 
   try {
-    return await attempt();
+    return await attemptNativeSheet();
   } catch (err) {
+    if (isUserCancelledSignIn(err)) {
+      throw err;
+    }
+
     const code = String((err as { code?: string } | null)?.code || '').toLowerCase();
-    // Retry once cleanly if Android Credential Manager returned a stale cached token
+    // Retry once cleanly if Android returned a stale cached token
     if (code === 'auth/invalid-credential' || code === 'auth/user-token-expired') {
       await FirebaseAuthentication.signOut().catch(() => {});
-      return attempt();
+      return attemptNativeSheet();
     }
+
+    // Automatic recovery from Google Play Services Error 10 (e.g. Play App Signing SHA-1 or Debug SHA-1 mismatch):
+    // Fall back seamlessly to Firebase Auth's Chrome Custom Tab Google OAuth flow so players can still sign in.
+    if (isAndroidSignInDeveloperError(err)) {
+      console.warn(
+        'Native Google Sign-In returned config code 10; falling back to Chrome Custom Tab Google OAuth.'
+      );
+      try {
+        return await performNativeGoogleWebFallback();
+      } catch (fallbackErr) {
+        if (isUserCancelledSignIn(fallbackErr)) {
+          throw fallbackErr;
+        }
+        // Surface the original error 10 diagnostic if fallback also cannot complete
+        console.error('Chrome Custom Tab Google OAuth fallback failed:', fallbackErr);
+        throw err;
+      }
+    }
+
     throw err;
+  }
+}
+
+export async function recoverPendingNativeSignIn(): Promise<void> {
+  if (!isCapacitorNativeApp() || auth.currentUser) return;
+  try {
+    const pending = await FirebaseAuthentication.getPendingAuthResult();
+    const idToken = pending?.credential?.idToken || null;
+    const accessToken = pending?.credential?.accessToken || null;
+    if (idToken || accessToken) {
+      await finishFirebaseSignInFromTokens(idToken, accessToken);
+    }
+  } catch {
+    // No pending OAuth redirect result to recover
   }
 }
 
@@ -133,16 +229,7 @@ export function formatGoogleSignInError(err: unknown): { silent: boolean; messag
   const lower = `${code} ${rawMsg}`.toLowerCase();
 
   // User intentionally closed/cancelled sign-in prompt
-  if (
-    code === 'auth/popup-closed-by-user' ||
-    code === 'auth/cancelled-popup-request' ||
-    lower.includes('popup-closed-by-user') ||
-    lower.includes('cancelled-popup-request') ||
-    lower.includes('12501') ||
-    lower.includes('user cancelled') ||
-    lower.includes('canceled') ||
-    lower.includes('dismissed')
-  ) {
+  if (isUserCancelledSignIn(err)) {
     return { silent: true, message: '' };
   }
 
@@ -161,17 +248,11 @@ export function formatGoogleSignInError(err: unknown): { silent: boolean; messag
   }
 
   if (isCapacitorNativeApp()) {
-    if (
-      lower.includes('default_web_client_id') ||
-      lower.includes('developer_error') ||
-      lower.includes('statuscode=10') ||
-      lower.includes('apiexception: 10') ||
-      lower.includes('12500') ||
-      rawMsg === 'NATIVE_AUTH_NO_ID_TOKEN'
-    ) {
+    if (isAndroidSignInDeveloperError(err)) {
       return {
         silent: false,
-        message: `Google Sign-In config error (${code || rawMsg || 'code 10'}). Check SHA-1 in Firebase Console & re-download google-services.json.`,
+        message:
+          'Google Sign-In configuration mismatch (code 10). Add both Upload Key & Play App Signing SHA-1 in Firebase Console, then rebuild with updated google-services.json.',
       };
     }
     if (lower.includes('network') || lower.includes('statuscode=7') || lower.includes('timeout')) {
@@ -182,7 +263,7 @@ export function formatGoogleSignInError(err: unknown): { silent: boolean; messag
     }
     return {
       silent: false,
-      message: `Google Sign-In error: ${code || rawMsg || 'Please check internet connection and try again.'}`,
+      message: `Google Sign-In failed (${code || rawMsg || 'network issue'}). Please try again.`,
     };
   }
 

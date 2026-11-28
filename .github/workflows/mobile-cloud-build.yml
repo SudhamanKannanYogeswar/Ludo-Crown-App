@@ -82,28 +82,19 @@ jobs:
           node scripts/configure-native-admob.mjs android
           npx cap sync android
           REPORT_SHA1=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log((r.sha1List||[]).join(', '));" 2>/dev/null || true)
+          REPORT_SHA1_COUNT=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.sha1Count || 0);" 2>/dev/null || echo "0")
           REPORT_WEB=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.hasWebClient ? 'true' : 'false');" 2>/dev/null || echo "false")
           REPORT_PKG=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.packageMatched ? 'true' : 'false');" 2>/dev/null || echo "false")
+          REPORT_PROJECT=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.projectMatched ? 'true' : 'false');" 2>/dev/null || echo "false")
           REPORT_APP_ID=$(node -e "const r=JSON.parse(require('fs').readFileSync('android/.native-config-report.json','utf8')); console.log(r.mobileSdkAppId || '');" 2>/dev/null || true)
           echo "gs_sha1=$REPORT_SHA1" >> "$GITHUB_OUTPUT"
+          echo "gs_sha1_count=$REPORT_SHA1_COUNT" >> "$GITHUB_OUTPUT"
           echo "gs_web_client=$REPORT_WEB" >> "$GITHUB_OUTPUT"
           echo "gs_pkg_matched=$REPORT_PKG" >> "$GITHUB_OUTPUT"
+          echo "gs_project_matched=$REPORT_PROJECT" >> "$GITHUB_OUTPUT"
           echo "gs_app_id=$REPORT_APP_ID" >> "$GITHUB_OUTPUT"
 
-      - name: Build installable Android APK (Debug)
-        working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
-
-      - name: Upload Android Debug APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LudoCrown-Android-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Build Signed Play Store AAB & Release APK (if keystore secrets exist)
+      - name: Build Android Debug APK & Signed Play Store AAB/Release APK
         id: signed_release
         working-directory: android
         env:
@@ -111,24 +102,63 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          HAS_GOOGLE_SERVICES: ${{ steps.android_config.outputs.has_google_services }}
         run: |
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "No ANDROID_KEYSTORE_BASE64 secret set — skipping signed Play Store bundle."
+          chmod +x gradlew
+          trap 'rm -f app/release-keystore.jks' EXIT
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks
+            SHA1=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA1:" | awk '{print $2}' || true)
+            SHA256=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA256:" | awk '{print $2}' || true)
+            echo "sha1=$SHA1" >> "$GITHUB_OUTPUT"
+            echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+            # Sign BOTH debug & release with the same registered permanent keystore so app-debug.apk never causes Google Sign-In Error 10
+            ./gradlew assembleDebug bundleRelease assembleRelease --no-daemon \
+              -PludoStoreFile="$PWD/app/release-keystore.jks" \
+              -PludoStorePassword="$ANDROID_KEYSTORE_PASSWORD" \
+              -PludoKeyAlias="$ANDROID_KEY_ALIAS" \
+              -PludoKeyPassword="$ANDROID_KEY_PASSWORD" \
+              -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
+              -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 secret set — building debug APK only."
+            ./gradlew assembleDebug --no-daemon
             echo "built=false" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          echo "$ANDROID_KEYSTORE_BASE64" | tr -d '\n\r ' | base64 --decode > app/release-keystore.jks
-          SHA1=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA1:" | awk '{print $2}' || true)
-          SHA256=$(keytool -list -v -keystore app/release-keystore.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" -keypass "$ANDROID_KEY_PASSWORD" 2>/dev/null | grep -m 1 "SHA256:" | awk '{print $2}' || true)
-          echo "sha1=$SHA1" >> "$GITHUB_OUTPUT"
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-          ./gradlew bundleRelease assembleRelease --no-daemon \
-            -Pandroid.injected.signing.store.file="$PWD/app/release-keystore.jks" \
-            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
-            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
-          rm -f app/release-keystore.jks
-          echo "built=true" >> "$GITHUB_OUTPUT"
+
+          # Verify google-services Gradle plugin generated R.string.default_web_client_id cleanly (not WILL_BE_OVERRIDDEN)
+          GENERATED_WEB_CLIENT=""
+          for f in app/build/generated/res/processReleaseGoogleServices/values/values.xml app/build/generated/res/processDebugGoogleServices/values/values.xml app/build/generated/res/google-services/release/values/values.xml app/build/generated/res/google-services/debug/values/values.xml; do
+            if [ -f "$f" ]; then
+              FOUND=$(grep -oE 'name="default_web_client_id"[^>]*>[^<]+' "$f" | sed 's/.*>//' | head -n 1 || true)
+              if [ -n "$FOUND" ]; then
+                GENERATED_WEB_CLIENT="$FOUND"
+                break
+              fi
+            fi
+          done
+          if [ -n "$GENERATED_WEB_CLIENT" ] && echo "$GENERATED_WEB_CLIENT" | grep -q '\.apps\.googleusercontent\.com'; then
+            echo "web_client_verified=true" >> "$GITHUB_OUTPUT"
+            echo "Verified generated default_web_client_id in Gradle resources."
+          else
+            echo "web_client_verified=false" >> "$GITHUB_OUTPUT"
+            if [ "$HAS_GOOGLE_SERVICES" = "true" ]; then
+              echo "::error::google-services Gradle plugin did NOT generate a valid default_web_client_id! Check GOOGLE_SERVICES_JSON_BASE64."
+              exit 1
+            fi
+          fi
+
+      - name: Upload Android Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LudoCrown-Android-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
       - name: Upload Signed Play Store AAB & Release APK
         if: steps.signed_release.outputs.built == 'true'
@@ -145,6 +175,18 @@ jobs:
           KEY_SHA1="${{ steps.signed_release.outputs.sha1 }}"
           KEY_SHA256="${{ steps.signed_release.outputs.sha256 }}"
           GS_SHA1="${{ steps.android_config.outputs.gs_sha1 }}"
+          GS_SHA1_COUNT="${{ steps.android_config.outputs.gs_sha1_count }}"
+          WEB_VERIFIED="${{ steps.signed_release.outputs.web_client_verified }}"
+
+          if [ "${{ steps.signed_release.outputs.built }}" = "true" ] && [ -n "$KEY_SHA1" ]; then
+            if ! echo "$GS_SHA1" | grep -qi "$KEY_SHA1"; then
+              echo "::warning::Upload Keystore SHA-1 ($KEY_SHA1) is NOT in google-services.json! Add it in Firebase Console -> com.ludocrown.game, re-download google-services.json, and update GOOGLE_SERVICES_JSON_BASE64."
+            fi
+            if [ "${GS_SHA1_COUNT:-0}" -lt 2 ]; then
+              echo "::warning::google-services.json has fewer than 2 SHA-1 fingerprints. For Google Play Store (.aab) installs, also add the Play App Signing SHA-1 from Play Console -> Setup -> App integrity -> App signing key certificate."
+            fi
+          fi
+
           {
             echo "## Ludo Crown — Android & Play Store Build Summary"
             echo ""
@@ -158,26 +200,31 @@ jobs:
               echo "| Google AdMob Ads | Test Mode | Add \`ADMOB_ANDROID_APP_ID\` secret before Play Store release |"
             fi
             if [ "${{ steps.android_config.outputs.has_google_services }}" = "true" ]; then
-              echo "| Native Google Sign-In | Enabled | Package matched=${{ steps.android_config.outputs.gs_pkg_matched }}, Web OAuth=${{ steps.android_config.outputs.gs_web_client }} |"
+              echo "| Native Google Sign-In | Enabled (+ Web Fallback) | Project matched=${{ steps.android_config.outputs.gs_project_matched }}, Package matched=${{ steps.android_config.outputs.gs_pkg_matched }}, Gradle Web OAuth verified=${WEB_VERIFIED} |"
               echo "| Firebase / Google Analytics | Enabled | Native SDK bundled via \`@capacitor-firebase/analytics\` · Firebase App ID \`${{ steps.android_config.outputs.gs_app_id }}\` |"
             else
               echo "| Native Google Sign-In | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret to enable Sign-In / Online Play |"
               echo "| Firebase / Google Analytics | Missing | Add \`GOOGLE_SERVICES_JSON_BASE64\` secret so Android Analytics connects to GA4 |"
             fi
             if [ "${{ steps.signed_release.outputs.built }}" = "true" ]; then
-              echo "| Play Store Bundle & APK | Signed | Download \`LudoCrown-PlayStore-Signed-Release\`: upload \`app-release.aab\` to Play Console & test \`app-release.apk\` on phone |"
+              echo "| Play Store Bundle & APK | Signed (Debug + Release) | Download \`LudoCrown-PlayStore-Signed-Release\`: upload \`app-release.aab\` to Play Console & test \`app-release.apk\` on phone |"
               if [ -n "$KEY_SHA1" ]; then
                 echo ""
-                echo "### Google Sign-In & Deep-Link Fingerprints"
-                echo "- **APK Keystore SHA-1**: \`$KEY_SHA1\`"
+                echo "### Google Sign-In & Play Store App Signing Fingerprints"
+                echo "- **Upload Keystore SHA-1**: \`$KEY_SHA1\`"
                 if [ -n "$KEY_SHA256" ]; then
-                  echo "- **APK Keystore SHA-256 (for \`public/.well-known/assetlinks.json\` & Firebase)**: \`$KEY_SHA256\`"
+                  echo "- **Upload Keystore SHA-256 (for \`public/.well-known/assetlinks.json\` & Firebase)**: \`$KEY_SHA256\`"
                 fi
-                echo "- **SHA-1(s) in \`google-services.json\`**: \`${GS_SHA1:-NONE FOUND}\`"
+                echo "- **SHA-1(s) registered in \`google-services.json\` ($GS_SHA1_COUNT total)**: \`${GS_SHA1:-NONE FOUND}\`"
                 if echo "$GS_SHA1" | grep -qi "$KEY_SHA1"; then
-                  echo "- **Result**: MATCHED — Native Google Sign-In is ready for direct APK installs! *(Once uploaded to Play Console, also add Google Play App Signing SHA-1 & SHA-256 in Firebase Console and \`assetlinks.json\`.)*"
+                  echo "- **Upload Key Check**: MATCHED — Direct \`app-release.apk\` & \`app-debug.apk\` installs match Firebase!"
                 else
-                  echo "- **Result**: MISMATCH — Paste \`$KEY_SHA1\` in Firebase Console -> Android app \`com.ludocrown.game\`, re-download \`google-services.json\`, and update \`GOOGLE_SERVICES_JSON_BASE64\` secret."
+                  echo "- **Upload Key Check**: MISMATCH — Add \`$KEY_SHA1\` in Firebase Console -> Android app \`com.ludocrown.game\`, re-download \`google-services.json\`, and update \`GOOGLE_SERVICES_JSON_BASE64\`."
+                fi
+                if [ "${GS_SHA1_COUNT:-0}" -lt 2 ]; then
+                  echo "- **Play Store (.aab) Notice**: Google Play re-signs \`.aab\` bundles with its own **App Signing key**. To prevent Error 10 on Play Store installs, add BOTH your Upload SHA-1 AND your Play Console **App signing key certificate SHA-1** (**Play Console → Setup → App integrity → App signing**) to Firebase Console → \`com.ludocrown.game\`, then re-download \`google-services.json\` and update \`GOOGLE_SERVICES_JSON_BASE64\`."
+                else
+                  echo "- **Play Store (.aab) Check**: Multiple SHA-1s detected ($GS_SHA1_COUNT) — verify both Upload Key & Play App Signing SHA-1 are included above."
                 fi
               fi
             else

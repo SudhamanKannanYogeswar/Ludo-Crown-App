@@ -6,6 +6,7 @@ import {
   deleteCurrentAuthUser,
   formatGoogleSignInError,
   isCapacitorNativeApp,
+  recoverPendingNativeSignIn,
   signInWithGoogleAuto,
   signOutGoogleAuto,
   testConnection,
@@ -66,11 +67,15 @@ import {
   deleteRoomInviteDoc,
   deleteUserAccountDocs,
   ensureUserDocs,
+  fetchAllBlockingActiveRooms,
+  fetchBlockingActiveRoom,
   fetchPublicLeaderboard,
   fetchPublicTournaments,
   findOrCreateQuickMatch,
   forfeitActiveRoomDoc,
   getInviteRemainingMs,
+  isRoomActiveForUser,
+  isRoomBlockingNewMatch,
   joinRoomByCode,
   joinTournamentDoc,
   leaveWaitingRoom,
@@ -354,12 +359,110 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [reconnecting, setReconnecting] = useState(false);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [activeRoom, setActiveRoom] = useState<RoomDoc | null>(null);
-  const [myActiveRooms, setMyActiveRooms] = useState<RoomDoc[]>([]);
+  const [subscribedActiveRooms, setSubscribedActiveRooms] = useState<RoomDoc[]>([]);
+  const [pinnedRoomIds, setPinnedRoomIds] = useState<string[]>([]);
+  const [pinnedRoomDocs, setPinnedRoomDocs] = useState<Record<string, RoomDoc>>({});
+  const pinnedRoomIdsRef = React.useRef<string[]>([]);
+  pinnedRoomIdsRef.current = pinnedRoomIds;
   const [activeMatchConflict, setActiveMatchConflict] = useState<ActiveMatchConflict | null>(null);
   const [roomMessages, setRoomMessages] = useState<ChatMessageDoc[]>([]);
   const [openRooms, setOpenRooms] = useState<RoomDoc[]>([]);
   const [offlineMatch, setOfflineMatch] = useState<OfflineMatchConfig | null>(null);
   const bypassActiveMatchGuardRef = React.useRef<boolean>(false);
+  const blockingActiveRoomRef = React.useRef<RoomDoc | null>(null);
+  const forfeitingRoomIdsRef = React.useRef<Set<string>>(new Set());
+  const matchEntryLockRef = React.useRef<boolean>(false);
+
+  const persistPinnedRoomIds = useCallback((uid: string, nextIds: string[]) => {
+    const clean = Array.from(new Set(nextIds.filter(Boolean))).slice(0, 6);
+    pinnedRoomIdsRef.current = clean;
+    setPinnedRoomIds(clean);
+    try {
+      const storageKey = `${LAST_ACTIVE_ROOM_KEY}_${uid}`;
+      if (clean.length > 0) {
+        localStorage.setItem(storageKey, JSON.stringify(clean));
+        localStorage.setItem(LAST_ACTIVE_ROOM_KEY, clean[0]);
+      } else {
+        localStorage.removeItem(storageKey);
+        localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const pinActiveRoomId = useCallback(
+    (uid: string | undefined, roomId: string | null | undefined) => {
+      if (!uid || !roomId) return;
+      forfeitingRoomIdsRef.current.delete(roomId);
+      const next = [roomId, ...pinnedRoomIdsRef.current.filter((id) => id !== roomId)].slice(0, 6);
+      persistPinnedRoomIds(uid, next);
+    },
+    [persistPinnedRoomIds]
+  );
+
+  const replacePinnedActiveRoomId = useCallback(
+    (uid: string | undefined, roomId: string | null | undefined) => {
+      if (!uid) return;
+      if (!roomId) {
+        persistPinnedRoomIds(uid, []);
+        setPinnedRoomDocs({});
+        return;
+      }
+      forfeitingRoomIdsRef.current.delete(roomId);
+      persistPinnedRoomIds(uid, [roomId]);
+      setPinnedRoomDocs((prev) => (roomId in prev ? { [roomId]: prev[roomId] } : {}));
+    },
+    [persistPinnedRoomIds]
+  );
+
+  const unpinActiveRoomId = useCallback(
+    (uid: string | undefined, roomId: string | null | undefined) => {
+      if (!uid || !roomId) return;
+      const next = pinnedRoomIdsRef.current.filter((id) => id !== roomId);
+      persistPinnedRoomIds(uid, next);
+      setPinnedRoomDocs((prev) => {
+        if (!(roomId in prev)) return prev;
+        const copy = { ...prev };
+        delete copy[roomId];
+        return copy;
+      });
+    },
+    [persistPinnedRoomIds]
+  );
+
+  // Authoritative merged active rooms list (direct pinned room listeners + collection query),
+  // prioritizing the currently open room first, then active playing rooms, then newest updated.
+  const rawActiveRooms = useMemo<RoomDoc[]>(() => {
+    if (!user) return [];
+    const now = Date.now();
+    const byId = new Map<string, RoomDoc>();
+    const consider = (room: RoomDoc | null | undefined) => {
+      if (!room || forfeitingRoomIdsRef.current.has(room.id)) return;
+      if (!isRoomActiveForUser(room, user.uid, now)) return;
+      const prev = byId.get(room.id);
+      if (
+        !prev ||
+        (room.turnCount || 0) > (prev.turnCount || 0) ||
+        (room.updatedAtMs || 0) >= (prev.updatedAtMs || 0)
+      ) {
+        byId.set(room.id, room);
+      }
+    };
+    for (const r of subscribedActiveRooms) consider(r);
+    for (const r of Object.values(pinnedRoomDocs)) consider(r);
+    return Array.from(byId.values()).sort((a, b) => {
+      if (activeRoomId && a.id !== b.id) {
+        if (a.id === activeRoomId) return -1;
+        if (b.id === activeRoomId) return 1;
+      }
+      if (a.status !== b.status) return a.status === 'playing' ? -1 : 1;
+      return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+    });
+  }, [user, activeRoomId, subscribedActiveRooms, pinnedRoomDocs]);
+
+  // Strict Single-Active-Match Invariant: expose at most 1 active room at any instant
+  const myActiveRooms = useMemo<RoomDoc[]>(() => rawActiveRooms.slice(0, 1), [rawActiveRooms]);
   const [pendingDeepLinkRoomCode, setPendingDeepLinkRoomCode] = useState<string | null>(() => {
     try {
       return sessionStorage.getItem('ludo_crown_pending_join_code') || null;
@@ -452,6 +555,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Startup Firestore connectivity test + Auth state listener
   useEffect(() => {
     testConnection();
+    recoverPendingNativeSignIn().catch(() => {});
     let cancelled = false;
     const unsubAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (cancelled) return;
@@ -503,7 +607,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setWallet(loadGuestWallet());
         setActiveRoomId(null);
         setActiveRoom(null);
-        setMyActiveRooms([]);
+        setSubscribedActiveRooms([]);
+        setPinnedRoomIds([]);
+        pinnedRoomIdsRef.current = [];
+        setPinnedRoomDocs({});
+        blockingActiveRoomRef.current = null;
+        forfeitingRoomIdsRef.current.clear();
         setRoomMessages([]);
         setRawIncomingInvites([]);
         setFriendships([]);
@@ -603,14 +712,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
     const unsubMyActiveRooms = subscribeUserActiveRooms(user.uid, (rooms) => {
-      setMyActiveRooms(rooms);
+      const visible = rooms.filter((r) => !forfeitingRoomIdsRef.current.has(r.id));
+      setSubscribedActiveRooms(visible);
+      // Pin the single primary active room so direct per-room tracking survives indefinitely
+      if (visible[0] && !pinnedRoomIdsRef.current.includes(visible[0].id)) {
+        pinActiveRoomId(user.uid, visible[0].id);
+      }
       // Notify player on Home/menus when a live running room is detected (e.g. after reload or reconnect)
       if (activeTabRef.current !== 'play') {
-        const runningMatch = rooms.find((r) => {
-          if (r.status !== 'playing') return false;
-          const mySeat = r.seats.find((s) => !s.isBot && s.uid === user.uid);
-          return Boolean(mySeat && !isSeatFinished(mySeat, r.tokens));
-        });
+        const runningMatch = visible.find((r) => isRoomBlockingNewMatch(r, user.uid) && r.status === 'playing');
         if (runningMatch && !notifiedActiveRoomIdsRef.current.has(runningMatch.id)) {
           notifiedActiveRoomIdsRef.current.add(runningMatch.id);
           showToast(
@@ -629,7 +739,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unsubInvites();
       unsubMyActiveRooms();
     };
-  }, [user, userDocsReadyUid, showToast]);
+  }, [user, userDocsReadyUid, pinActiveRoomId, showToast]);
 
   // Global Real-Time Friend Presence Heartbeat (online / in_match / offline)
   const desiredPresenceStatus =
@@ -737,18 +847,102 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(clearTimer);
   }, [networkOnline, user, showToast]);
 
-  // Persist last active room ID locally for fast mobile recovery
+  // Load persisted pinned active room IDs for this signed-in player
   useEffect(() => {
+    if (!user) return;
     try {
-      if (activeRoomId && activeRoom?.status !== 'finished') {
-        localStorage.setItem(LAST_ACTIVE_ROOM_KEY, activeRoomId);
-      } else if (!activeRoomId || activeRoom?.status === 'finished') {
-        localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+      const storedList = localStorage.getItem(`${LAST_ACTIVE_ROOM_KEY}_${user.uid}`);
+      const legacySingle = localStorage.getItem(LAST_ACTIVE_ROOM_KEY);
+      const parsed: string[] = [];
+      if (storedList) {
+        const arr = JSON.parse(storedList);
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            if (typeof item === 'string' && item.trim()) parsed.push(item.trim());
+          }
+        }
+      }
+      if (legacySingle && legacySingle.trim() && !parsed.includes(legacySingle.trim())) {
+        parsed.push(legacySingle.trim());
+      }
+      if (parsed.length > 0) {
+        persistPinnedRoomIds(user.uid, parsed);
       }
     } catch {
       // ignore storage errors
     }
-  }, [activeRoomId, activeRoom?.status]);
+  }, [user, persistPinnedRoomIds]);
+
+  // Direct per-room real-time listeners for pinned active rooms (100% immune to historical match count)
+  useEffect(() => {
+    if (!user || pinnedRoomIds.length === 0) return;
+    const unsubs = pinnedRoomIds.map((roomId) =>
+      subscribeRoom(roomId, (room) => {
+        if (forfeitingRoomIdsRef.current.has(roomId) || !room || !isRoomActiveForUser(room, user.uid)) {
+          unpinActiveRoomId(user.uid, roomId);
+          return;
+        }
+        setPinnedRoomDocs((prev) => ({ ...prev, [roomId]: room }));
+        if (
+          activeTabRef.current !== 'play' &&
+          room.status === 'playing' &&
+          isRoomBlockingNewMatch(room, user.uid) &&
+          !notifiedActiveRoomIdsRef.current.has(room.id)
+        ) {
+          notifiedActiveRoomIdsRef.current.add(room.id);
+          showToast(
+            `Live match running in table ${room.roomCode} (Auto-Play active)! Tap Rejoin anytime.`,
+            'info'
+          );
+        }
+      })
+    );
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [user, pinnedRoomIds, unpinActiveRoomId, showToast]);
+
+  // Self-Healing Single-Active-Match Reconciler:
+  // If more than 1 active room is ever detected (e.g. legacy matches or multi-device play),
+  // keep ONLY the primary room (activeRoomId or newest live match) and forfeit all older duplicates immediately.
+  useEffect(() => {
+    if (!user || rawActiveRooms.length <= 1) return;
+    const primary = rawActiveRooms[0];
+    const duplicates = rawActiveRooms
+      .slice(1)
+      .filter((r) => !forfeitingRoomIdsRef.current.has(r.id));
+    if (duplicates.length === 0) return;
+
+    const dupIds = new Set(duplicates.map((r) => r.id));
+    for (const id of dupIds) {
+      forfeitingRoomIdsRef.current.add(id);
+      unpinActiveRoomId(user.uid, id);
+    }
+    setSubscribedActiveRooms((prev) => prev.filter((r) => !dupIds.has(r.id)));
+    if (primary) {
+      replacePinnedActiveRoomId(user.uid, primary.id);
+    }
+    const uid = user.uid;
+    const displayName = profileDisplayNameRef.current || 'Player';
+    Promise.allSettled(
+      duplicates.map((dup) => forfeitActiveRoomDoc(dup, uid, displayName))
+    ).catch(() => {});
+  }, [user, rawActiveRooms, unpinActiveRoomId, replacePinnedActiveRoomId]);
+
+  // Keep activeRoomId pinned whenever the player enters a live/waiting table; only unpin when finished
+  useEffect(() => {
+    if (!user || !activeRoomId) return;
+    if (activeRoom && activeRoom.id === activeRoomId) {
+      if (activeRoom.status === 'finished') {
+        unpinActiveRoomId(user.uid, activeRoomId);
+      } else if (isRoomActiveForUser(activeRoom, user.uid)) {
+        pinActiveRoomId(user.uid, activeRoomId);
+        setPinnedRoomDocs((prev) => ({ ...prev, [activeRoomId]: activeRoom }));
+      }
+    } else {
+      pinActiveRoomId(user.uid, activeRoomId);
+    }
+  }, [user, activeRoomId, activeRoom, pinActiveRoomId, unpinActiveRoomId]);
 
   // Real-time Active Room subscription
   useEffect(() => {
@@ -761,10 +955,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setActiveRoom(room);
       if (!room) {
         setActiveRoomId(null);
+        unpinActiveRoomId(user.uid, activeRoomId);
       }
     });
     return () => unsub();
-  }, [user, activeRoomId]);
+  }, [user, activeRoomId, unpinActiveRoomId]);
 
   // Waiting-room host heartbeat (every 15s) so live public lobbies stay fresh & abandoned ones auto-expire
   useEffect(() => {
@@ -888,10 +1083,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const awayPlayingRooms = myActiveRooms.filter((room) => {
       if (room.status !== 'playing') return false;
+      if (forfeitingRoomIdsRef.current.has(room.id)) return false;
       const isViewingThisRoom = activeTab === 'play' && activeRoomId === room.id;
       if (isViewingThisRoom) return false;
       const mySeat = room.seats.find((s) => !s.isBot && s.uid === user.uid);
-      return Boolean(mySeat);
+      return Boolean(mySeat && !mySeat.forfeited);
     });
 
     if (awayPlayingRooms.length === 0) return;
@@ -936,6 +1132,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : 4400;
 
       const timer = setTimeout(async () => {
+        if (forfeitingRoomIdsRef.current.has(room.id)) return;
         if (bgAutoPlayBusyRef.current.has(room.id)) return;
         if (activeTabRef.current === 'play' && activeRoomRef.current?.id === room.id) return;
         bgAutoPlayBusyRef.current.add(room.id);
@@ -1280,12 +1477,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(GUEST_PROFILE_KEY);
         localStorage.removeItem(GUEST_WALLET_KEY);
         localStorage.removeItem(LAST_ACTIVE_ROOM_KEY);
+        localStorage.removeItem(`${LAST_ACTIVE_ROOM_KEY}_${uid}`);
       } catch {
         // ignore storage errors
       }
       setActiveRoomId(null);
       setActiveRoom(null);
-      setMyActiveRooms([]);
+      setSubscribedActiveRooms([]);
+      setPinnedRoomIds([]);
+      pinnedRoomIdsRef.current = [];
+      setPinnedRoomDocs({});
+      blockingActiveRoomRef.current = null;
+      forfeitingRoomIdsRef.current.clear();
       setActiveTab('lobby');
       showToast('Your account and cloud data have been permanently deleted.', 'info');
       return {
@@ -1628,17 +1831,63 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         candidates.push(r);
       }
     }
+    const now = Date.now();
     for (const room of candidates) {
-      if (room.status === 'finished') continue;
-      const mySeat = room.seats.find((s) => !s.isBot && s.uid === user.uid);
-      if (mySeat?.forfeited) continue;
-      if (room.status === 'waiting') return room;
-      if (room.status === 'playing' && mySeat && !isSeatFinished(mySeat, room.tokens)) {
+      if (isRoomBlockingNewMatch(room, user.uid, now)) {
         return room;
       }
     }
     return null;
   }, [user, activeRoom, myActiveRooms]);
+  blockingActiveRoomRef.current = blockingActiveRoom;
+
+  const forfeitAllBlockingActiveRooms = useCallback(
+    async (exceptRoomId?: string) => {
+      if (!user) return;
+      const candidateMap = new Map<string, RoomDoc>();
+      const addCandidate = (r: RoomDoc | null | undefined) => {
+        if (!r || (exceptRoomId && r.id === exceptRoomId)) return;
+        candidateMap.set(r.id, r);
+      };
+      addCandidate(activeRoom);
+      addCandidate(blockingActiveRoomRef.current);
+      for (const r of rawActiveRooms) addCandidate(r);
+      for (const r of Object.values(pinnedRoomDocs)) addCandidate(r);
+
+      try {
+        const liveRooms = await fetchAllBlockingActiveRooms(user.uid, pinnedRoomIdsRef.current);
+        for (const r of liveRooms) addCandidate(r);
+      } catch {
+        // Proceed with locally known rooms if offline
+      }
+
+      const targets = Array.from(candidateMap.values()).filter((r) => r.status !== 'finished');
+      if (targets.length === 0) return;
+
+      const targetIds = new Set(targets.map((r) => r.id));
+      for (const id of targetIds) {
+        forfeitingRoomIdsRef.current.add(id);
+        unpinActiveRoomId(user.uid, id);
+      }
+      setSubscribedActiveRooms((prev) => prev.filter((r) => !targetIds.has(r.id)));
+      if (blockingActiveRoomRef.current && targetIds.has(blockingActiveRoomRef.current.id)) {
+        blockingActiveRoomRef.current = null;
+      }
+      if ((activeRoomId && targetIds.has(activeRoomId)) || (activeRoom && targetIds.has(activeRoom.id))) {
+        setActiveRoomId(null);
+        setActiveRoom(null);
+        setRoomMessages([]);
+        if (activeTabRef.current === 'play') {
+          setActiveTab('lobby');
+        }
+      }
+
+      await Promise.allSettled(
+        targets.map((r) => forfeitActiveRoomDoc(r, user.uid, profile.displayName))
+      );
+    },
+    [user, activeRoom, activeRoomId, rawActiveRooms, pinnedRoomDocs, unpinActiveRoomId, profile.displayName]
+  );
 
   const forfeitActiveRoom = useCallback(
     async (roomId?: string) => {
@@ -1647,17 +1896,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         (roomId
           ? activeRoom?.id === roomId
             ? activeRoom
-            : myActiveRooms.find((r) => r.id === roomId)
-          : activeRoom || blockingActiveRoom) || null;
+            : rawActiveRooms.find((r) => r.id === roomId) || pinnedRoomDocs[roomId]
+          : activeRoom || blockingActiveRoomRef.current) || null;
       if (!target) return;
 
-      try {
-        await forfeitActiveRoomDoc(target, user.uid, profile.displayName);
-      } catch {
-        // Proceed with local cleanup even on transient network hiccup
+      forfeitingRoomIdsRef.current.add(target.id);
+      unpinActiveRoomId(user.uid, target.id);
+      setSubscribedActiveRooms((prev) => prev.filter((r) => r.id !== target.id));
+      if (blockingActiveRoomRef.current?.id === target.id) {
+        blockingActiveRoomRef.current = null;
       }
-
-      setMyActiveRooms((prev) => prev.filter((r) => r.id !== target.id));
       if (activeRoomId === target.id || activeRoom?.id === target.id) {
         setActiveRoomId(null);
         setActiveRoom(null);
@@ -1666,6 +1914,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setActiveTab('lobby');
         }
       }
+
+      try {
+        await forfeitActiveRoomDoc(target, user.uid, profile.displayName);
+      } catch {
+        // Proceed with local cleanup even on transient network hiccup
+      }
+
       showToast(
         target.status === 'waiting'
           ? `Closed waiting table ${target.roomCode}.`
@@ -1673,7 +1928,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         'info'
       );
     },
-    [user, activeRoom, activeRoomId, myActiveRooms, blockingActiveRoom, profile.displayName, showToast]
+    [user, activeRoom, activeRoomId, rawActiveRooms, pinnedRoomDocs, unpinActiveRoomId, profile.displayName, showToast]
   );
 
   const dismissActiveMatchConflict = useCallback(() => {
@@ -1682,37 +1937,63 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const confirmExitAndStartNewMatch = useCallback(async () => {
     const conflict = activeMatchConflict;
-    if (!conflict) return;
+    if (!conflict || matchEntryLockRef.current) return;
+    matchEntryLockRef.current = true;
     setActiveMatchConflict(null);
-    await forfeitActiveRoom(conflict.room.id);
-    bypassActiveMatchGuardRef.current = true;
     try {
-      await conflict.onConfirmNewMatch();
+      // Exit EVERY active match before entering the new one (never leaves leftover rooms behind)
+      await forfeitAllBlockingActiveRooms();
+      bypassActiveMatchGuardRef.current = true;
+      try {
+        await conflict.onConfirmNewMatch();
+      } finally {
+        bypassActiveMatchGuardRef.current = false;
+      }
     } finally {
-      bypassActiveMatchGuardRef.current = false;
+      matchEntryLockRef.current = false;
     }
-  }, [activeMatchConflict, forfeitActiveRoom]);
+  }, [activeMatchConflict, forfeitAllBlockingActiveRooms]);
 
   const guardSingleActiveMatch = useCallback(
-    (
+    async (
       actionLabel: string,
       onConfirmNewMatch: () => Promise<void> | void,
       allowedRoomCode?: string
-    ): boolean => {
+    ): Promise<boolean> => {
       if (bypassActiveMatchGuardRef.current) return false;
-      if (!blockingActiveRoom) return false;
       const cleanAllowed = allowedRoomCode?.trim().toUpperCase();
-      if (cleanAllowed && blockingActiveRoom.roomCode === cleanAllowed) {
+
+      // 1. Instant synchronous check against pinned + active rooms
+      let existingRoom = blockingActiveRoomRef.current;
+
+      // 2. Live server safety check (catches active rooms even across devices or before snapshots settle)
+      if (!existingRoom && user) {
+        try {
+          const liveBlocking = await fetchBlockingActiveRoom(user.uid, pinnedRoomIdsRef.current);
+          if (liveBlocking && !forfeitingRoomIdsRef.current.has(liveBlocking.id)) {
+            existingRoom = liveBlocking;
+            replacePinnedActiveRoomId(user.uid, liveBlocking.id);
+            setPinnedRoomDocs({ [liveBlocking.id]: liveBlocking });
+            blockingActiveRoomRef.current = liveBlocking;
+          }
+        } catch {
+          // Proceed with local state if offline
+        }
+      }
+
+      if (!existingRoom) return false;
+      if (cleanAllowed && existingRoom.roomCode === cleanAllowed) {
         return false;
       }
+
       setActiveMatchConflict({
         actionLabel,
-        room: blockingActiveRoom,
+        room: existingRoom,
         onConfirmNewMatch,
       });
       return true;
     },
-    [blockingActiveRoom]
+    [user, replacePinnedActiveRoomId]
   );
 
   const refreshOpenRooms = useCallback(async () => {
@@ -1728,20 +2009,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to join real-time multiplayer tables.', 'info');
         return;
       }
+      if (matchEntryLockRef.current) return;
       const run = async () => {
         const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
         const code = await findOrCreateQuickMatch(effectiveProfile, opts);
+        replacePinnedActiveRoomId(user.uid, code);
         setOfflineMatch(null);
         setActiveRoomId(code);
         setActiveTab('play');
         showToast(`Connected to table ${code}.`, 'success');
       };
-      if (guardSingleActiveMatch(`Start ${opts.maxPlayers}P Online Match`, run)) {
-        return;
+      matchEntryLockRef.current = true;
+      try {
+        if (await guardSingleActiveMatch(`Start ${opts.maxPlayers}P Online Match`, run)) {
+          return;
+        }
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
-      await run();
     },
-    [user, profile, showToast, guardSingleActiveMatch]
+    [user, profile, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const createPrivateRoom = useCallback(
@@ -1750,20 +2038,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to host a private table for friends.', 'info');
         return;
       }
+      if (matchEntryLockRef.current) return;
       const run = async () => {
         const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
         const code = await createMultiplayerRoom(effectiveProfile, { ...opts, visibility: 'private' });
+        replacePinnedActiveRoomId(user.uid, code);
         setOfflineMatch(null);
         setActiveRoomId(code);
         setActiveTab('play');
         showToast(`Private table ${code} created. Share the code with friends!`, 'success');
       };
-      if (guardSingleActiveMatch('Create Private Room', run)) {
-        return;
+      matchEntryLockRef.current = true;
+      try {
+        if (await guardSingleActiveMatch('Create Private Room', run)) {
+          return;
+        }
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
-      await run();
     },
-    [user, profile, showToast, guardSingleActiveMatch]
+    [user, profile, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const joinRoom = useCallback(
@@ -1772,10 +2067,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to join a friend’s table.', 'info');
         return;
       }
+      if (matchEntryLockRef.current) return;
       const run = async () => {
         try {
           const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
           const room = await joinRoomByCode(code, effectiveProfile);
+          replacePinnedActiveRoomId(user.uid, room.id);
           setOfflineMatch(null);
           setActiveRoomId(room.id);
           setActiveTab('play');
@@ -1784,12 +2081,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           showToast(err instanceof Error ? err.message : 'Unable to join table.', 'error');
         }
       };
-      if (guardSingleActiveMatch(`Join Table ${code.trim().toUpperCase()}`, run, code)) {
-        return;
+      matchEntryLockRef.current = true;
+      try {
+        if (await guardSingleActiveMatch(`Join Table ${code.trim().toUpperCase()}`, run, code)) {
+          return;
+        }
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
-      await run();
     },
-    [user, profile, showToast, guardSingleActiveMatch]
+    [user, profile, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const clearPendingDeepLinkRoom = useCallback(() => {
@@ -1832,11 +2134,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to rejoin your live table.', 'info');
         return;
       }
+      replacePinnedActiveRoomId(user.uid, roomId);
+      forfeitAllBlockingActiveRooms(roomId).catch(() => {});
       setOfflineMatch(null);
       setActiveRoomId(roomId);
       setActiveTab('play');
       notifiedActiveRoomIdsRef.current.add(roomId);
-      const target = myActiveRooms.find((r) => r.id === roomId);
+      const target = rawActiveRooms.find((r) => r.id === roomId) || pinnedRoomDocs[roomId];
       const mySeatInTarget = target?.seats.find((s) => !s.isBot && s.uid === user.uid);
       const alreadyFinished = Boolean(target && mySeatInTarget && isSeatFinished(mySeatInTarget, target.tokens));
       if (!target || target.status === 'playing') {
@@ -1854,7 +2158,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         'success'
       );
     },
-    [user, myActiveRooms, profile.displayName, showToast]
+    [
+      user,
+      rawActiveRooms,
+      pinnedRoomDocs,
+      replacePinnedActiveRoomId,
+      forfeitAllBlockingActiveRooms,
+      profile.displayName,
+      showToast,
+    ]
   );
 
   const setMySeatAutoPlay = useCallback(
@@ -1923,30 +2235,60 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const roomToExit = activeRoom;
     if (roomToExit && user) {
       if (roomToExit.status === 'waiting') {
+        unpinActiveRoomId(user.uid, roomToExit.id);
+        setSubscribedActiveRooms((prev) => prev.filter((r) => r.id !== roomToExit.id));
+        if (blockingActiveRoomRef.current?.id === roomToExit.id) {
+          blockingActiveRoomRef.current = null;
+        }
         await leaveWaitingRoom(roomToExit, user.uid, profile.displayName).catch(() => {});
       } else if (roomToExit.status === 'playing') {
         notifiedActiveRoomIdsRef.current.add(roomToExit.id);
         const mySeatInExit = roomToExit.seats.find((s) => !s.isBot && s.uid === user.uid);
         const alreadyFinished = Boolean(mySeatInExit && isSeatFinished(mySeatInExit, roomToExit.tokens));
         if (!alreadyFinished) {
+          // Immediately pin & seed optimistic Auto-Play state BEFORE clearing activeRoom
+          // so Lobby banner, Global Resume strip, and Single-Match Guard stay 100% active with 0ms gap!
+          const optimisticAutoPlayRoom: RoomDoc = {
+            ...roomToExit,
+            updatedAtMs: Date.now(),
+            seats: roomToExit.seats.map((s) =>
+              !s.isBot && s.uid === user.uid
+                ? { ...s, away: true, autoPlay: true, lastSeenMs: Date.now() }
+                : s
+            ),
+          };
+          replacePinnedActiveRoomId(user.uid, roomToExit.id);
+          setPinnedRoomDocs({ [roomToExit.id]: optimisticAutoPlayRoom });
+          blockingActiveRoomRef.current = optimisticAutoPlayRoom;
+
           await updateRoomSeatPresence(
             roomToExit.id,
             user.uid,
-            { away: true, autoPlay: true },
+            { away: true, autoPlay: true, lastSeenMs: Date.now() },
             `${profile.displayName} stepped out — Auto-Play active.`
           ).catch(() => {});
+
           showToast(
-            `Auto-Play is covering your turns in ${roomToExit.roomCode}. Tap Rejoin anytime!`,
+            `Auto-Play is running in table ${roomToExit.roomCode}. Tap Rejoin anytime (no rewards if completed on Auto-Play).`,
             'info'
           );
+          if (notifPrefsRef.current.enabled) {
+            showDeviceNotificationAlert(
+              `Match Running on Auto-Play · Table ${roomToExit.roomCode}`,
+              'Auto-Play is covering your turns in Ludo Crown. Return anytime to take back control.',
+              `autoplay-running-${roomToExit.id}`
+            );
+          }
         }
+      } else if (roomToExit.status === 'finished') {
+        unpinActiveRoomId(user.uid, roomToExit.id);
       }
     }
     setActiveRoomId(null);
     setActiveRoom(null);
     setRoomMessages([]);
     setActiveTab('lobby');
-  }, [activeRoom, user, profile.displayName, showToast]);
+  }, [activeRoom, user, replacePinnedActiveRoomId, unpinActiveRoomId, profile.displayName, showToast]);
 
   const rematchOnlineRoom = useCallback(
     async (finishedRoom: RoomDoc) => {
@@ -1954,88 +2296,103 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to start an online rematch.', 'info');
         return;
       }
-      try {
-        const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
-        if (finishedRoom.visibility === 'public') {
-          const code = await findOrCreateQuickMatch(effectiveProfile, {
+      if (matchEntryLockRef.current) return;
+      const run = async () => {
+        try {
+          const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
+          if (finishedRoom.visibility === 'public') {
+            const code = await findOrCreateQuickMatch(effectiveProfile, {
+              mode: finishedRoom.mode,
+              maxPlayers: finishedRoom.maxPlayers,
+              entryStake: finishedRoom.entryStake,
+            });
+            replacePinnedActiveRoomId(user.uid, code);
+            setOfflineMatch(null);
+            setActiveRoomId(code);
+            setActiveTab('play');
+            showToast(`Rematch table ${code} ready!`, 'success');
+            return;
+          }
+
+          const code = await createMultiplayerRoom(effectiveProfile, {
+            visibility: 'private',
             mode: finishedRoom.mode,
             maxPlayers: finishedRoom.maxPlayers,
             entryStake: finishedRoom.entryStake,
           });
+          replacePinnedActiveRoomId(user.uid, code);
+          const freshRoom: RoomDoc = {
+            id: code,
+            roomCode: code,
+            hostUid: effectiveProfile.uid,
+            visibility: 'private',
+            mode: finishedRoom.mode,
+            maxPlayers: finishedRoom.maxPlayers,
+            entryStake: finishedRoom.entryStake,
+            status: 'waiting',
+            openPublic: false,
+            playerUids: [effectiveProfile.uid],
+            seats: [
+              {
+                uid: effectiveProfile.uid,
+                name: effectiveProfile.displayName,
+                avatarId: effectiveProfile.avatarId,
+                avatarFrame: effectiveProfile.avatarFrame,
+                color: 'red',
+                isBot: false,
+                elo: effectiveProfile.elo,
+              },
+            ],
+            tokens: {
+              red: [-1, -1, -1, -1],
+              green: [-1, -1, -1, -1],
+              yellow: [-1, -1, -1, -1],
+              blue: [-1, -1, -1, -1],
+            },
+            turnIndex: 0,
+            diceValue: 0,
+            turnPhase: 'roll',
+            consecutiveSixes: 0,
+            winnerColor: '',
+            winnerUid: '',
+            lastActionText: '',
+            turnCount: 0,
+          };
+
           setOfflineMatch(null);
           setActiveRoomId(code);
           setActiveTab('play');
-          showToast(`Rematch table ${code} ready!`, 'success');
+
+          const otherHumans = finishedRoom.seats.filter(
+            (s) => !s.isBot && s.uid !== effectiveProfile.uid
+          );
+          if (otherHumans.length > 0) {
+            await Promise.allSettled(
+              otherHumans.map((seat) => sendRoomInviteDoc(freshRoom, effectiveProfile, seat.uid))
+            );
+            showToast(
+              `Rematch table ${code} open! Invited ${otherHumans.length} friend${otherHumans.length > 1 ? 's' : ''}.`,
+              'success'
+            );
+          } else {
+            showToast(`Fresh rematch table ${code} created!`, 'success');
+          }
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : 'Unable to create rematch table.', 'error');
+        }
+      };
+
+      matchEntryLockRef.current = true;
+      try {
+        if (await guardSingleActiveMatch('Start Rematch', run)) {
           return;
         }
-
-        const code = await createMultiplayerRoom(effectiveProfile, {
-          visibility: 'private',
-          mode: finishedRoom.mode,
-          maxPlayers: finishedRoom.maxPlayers,
-          entryStake: finishedRoom.entryStake,
-        });
-        const freshRoom: RoomDoc = {
-          id: code,
-          roomCode: code,
-          hostUid: effectiveProfile.uid,
-          visibility: 'private',
-          mode: finishedRoom.mode,
-          maxPlayers: finishedRoom.maxPlayers,
-          entryStake: finishedRoom.entryStake,
-          status: 'waiting',
-          openPublic: false,
-          playerUids: [effectiveProfile.uid],
-          seats: [
-            {
-              uid: effectiveProfile.uid,
-              name: effectiveProfile.displayName,
-              avatarId: effectiveProfile.avatarId,
-              avatarFrame: effectiveProfile.avatarFrame,
-              color: 'red',
-              isBot: false,
-              elo: effectiveProfile.elo,
-            },
-          ],
-          tokens: {
-            red: [-1, -1, -1, -1],
-            green: [-1, -1, -1, -1],
-            yellow: [-1, -1, -1, -1],
-            blue: [-1, -1, -1, -1],
-          },
-          turnIndex: 0,
-          diceValue: 0,
-          turnPhase: 'roll',
-          consecutiveSixes: 0,
-          winnerColor: '',
-          winnerUid: '',
-          lastActionText: '',
-          turnCount: 0,
-        };
-
-        setOfflineMatch(null);
-        setActiveRoomId(code);
-        setActiveTab('play');
-
-        const otherHumans = finishedRoom.seats.filter(
-          (s) => !s.isBot && s.uid !== effectiveProfile.uid
-        );
-        if (otherHumans.length > 0) {
-          await Promise.allSettled(
-            otherHumans.map((seat) => sendRoomInviteDoc(freshRoom, effectiveProfile, seat.uid))
-          );
-          showToast(
-            `Rematch table ${code} open! Invited ${otherHumans.length} friend${otherHumans.length > 1 ? 's' : ''}.`,
-            'success'
-          );
-        } else {
-          showToast(`Fresh rematch table ${code} created!`, 'success');
-        }
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Unable to create rematch table.', 'error');
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
     },
-    [user, profile, showToast]
+    [user, profile, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const launchOfflinePractice = useCallback(
@@ -2051,12 +2408,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : config.tournamentContext
           ? 'Start Cup Match'
           : 'Start VS Computer';
-      if (guardSingleActiveMatch(label, run)) {
+
+      if (bypassActiveMatchGuardRef.current) {
+        run();
         return;
       }
+
+      // Immediate synchronous guard if a blocking online match is already known
+      if (blockingActiveRoomRef.current) {
+        setActiveMatchConflict({
+          actionLabel: label,
+          room: blockingActiveRoomRef.current,
+          onConfirmNewMatch: run,
+        });
+        return;
+      }
+
+      // Also verify live if signed in so an active match on Auto-Play can never be bypassed
+      if (user) {
+        guardSingleActiveMatch(label, run)
+          .then((blocked) => {
+            if (!blocked) run();
+          })
+          .catch(() => {
+            run();
+          });
+        return;
+      }
+
       run();
     },
-    [guardSingleActiveMatch]
+    [user, guardSingleActiveMatch]
   );
 
   const closeOfflineMatch = useCallback(() => {
@@ -2186,6 +2568,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to invite friends to a table.', 'info');
         return;
       }
+      if (matchEntryLockRef.current) return;
       const run = async () => {
         try {
           const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
@@ -2197,6 +2580,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               maxPlayers: 4,
               entryStake: 100,
             });
+            replacePinnedActiveRoomId(user.uid, code);
             setOfflineMatch(null);
             setActiveRoomId(code);
             setActiveTab('play');
@@ -2255,13 +2639,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       };
 
-      const hasOpenWaitingRoom = Boolean(activeRoom && activeRoom.status === 'waiting');
-      if (!hasOpenWaitingRoom && guardSingleActiveMatch(`Invite ${friendName} to New Table`, run)) {
-        return;
+      matchEntryLockRef.current = true;
+      try {
+        const hasOpenWaitingRoom = Boolean(activeRoom && activeRoom.status === 'waiting');
+        if (!hasOpenWaitingRoom && (await guardSingleActiveMatch(`Invite ${friendName} to New Table`, run))) {
+          return;
+        }
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
-      await run();
     },
-    [user, activeRoom, profile, leaderboard, showToast, guardSingleActiveMatch]
+    [user, activeRoom, profile, leaderboard, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const acceptRoomInvite = useCallback(
@@ -2270,6 +2659,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         showToast('Sign in with Google to accept table invites.', 'info');
         return;
       }
+      if (matchEntryLockRef.current) return;
       if (getInviteRemainingMs(invite, Date.now()) <= 0) {
         await deleteRoomInviteDoc(invite.id).catch(() => {});
         showToast('This table invite has expired.', 'info');
@@ -2279,6 +2669,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         try {
           const effectiveProfile = profile.uid === user.uid ? profile : { ...profile, uid: user.uid };
           const room = await joinRoomByCode(invite.roomCode, effectiveProfile);
+          replacePinnedActiveRoomId(user.uid, room.id);
           await respondToRoomInviteDoc(invite.id, 'accepted').catch(() => {});
           setOfflineMatch(null);
           setActiveRoomId(room.id);
@@ -2296,12 +2687,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           );
         }
       };
-      if (guardSingleActiveMatch(`Join ${invite.fromName}'s Table`, run, invite.roomCode)) {
-        return;
+      matchEntryLockRef.current = true;
+      try {
+        if (await guardSingleActiveMatch(`Join ${invite.fromName}'s Table`, run, invite.roomCode)) {
+          return;
+        }
+        await run();
+      } finally {
+        matchEntryLockRef.current = false;
       }
-      await run();
     },
-    [user, profile, showToast, guardSingleActiveMatch]
+    [user, profile, replacePinnedActiveRoomId, showToast, guardSingleActiveMatch]
   );
 
   const declineRoomInvite = useCallback(

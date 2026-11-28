@@ -11,19 +11,21 @@ const IOS_APP_ID =
   (process.env.ADMOB_IOS_APP_ID || '').trim() ||
   'ca-app-pub-3940256099942544~1458002511';
 
-function readWebOAuthClientId() {
+function readFirebaseAppletConfig() {
   try {
     const cfgPath = path.resolve('firebase-applet-config.json');
     if (fs.existsSync(cfgPath)) {
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      if (typeof cfg?.oAuthClientId === 'string' && cfg.oAuthClientId.trim()) {
-        return cfg.oAuthClientId.trim();
-      }
+      return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     }
   } catch {
     // ignore
   }
-  return '';
+  return {};
+}
+
+function readWebOAuthClientId() {
+  const cfg = readFirebaseAppletConfig();
+  return typeof cfg?.oAuthClientId === 'string' ? cfg.oAuthClientId.trim() : '';
 }
 
 function ensurePermission(xml, permissionName) {
@@ -74,14 +76,44 @@ function configurePlayStoreSdkAndVersion() {
     }
   }
 
-  // 3. Patch versionCode & versionName in android/app/build.gradle so every Play Store upload has a higher versionCode
+  // 3. Patch versionCode & versionName in android/app/build.gradle and add unified keystore signing hook
+  //    so BOTH debug & release APKs use the registered permanent keystore when passed via -PludoStoreFile=...
   const appGradlePath = path.resolve('android/app/build.gradle');
   if (fs.existsSync(appGradlePath)) {
     let appGradle = fs.readFileSync(appGradlePath, 'utf8');
     appGradle = appGradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
     appGradle = appGradle.replace(/versionName\s+"[^"]*"/, `versionName "${versionName}"`);
+
+    if (!appGradle.includes('ludoPermanentSigning')) {
+      const signingHook = `
+android {
+    if (project.hasProperty('ludoStoreFile') && file(project.property('ludoStoreFile')).exists()) {
+        signingConfigs {
+            ludoPermanentSigning {
+                storeFile file(project.property('ludoStoreFile'))
+                storePassword project.property('ludoStorePassword')
+                keyAlias project.property('ludoKeyAlias')
+                keyPassword project.property('ludoKeyPassword')
+            }
+        }
+        buildTypes {
+            debug {
+                signingConfig signingConfigs.ludoPermanentSigning
+            }
+            release {
+                signingConfig signingConfigs.ludoPermanentSigning
+            }
+        }
+    }
+}
+`;
+      appGradle += signingHook;
+    }
+
     fs.writeFileSync(appGradlePath, appGradle, 'utf8');
-    console.log(`Configured Android release version: versionCode=${versionCode}, versionName="${versionName}"`);
+    console.log(
+      `Configured Android release version: versionCode=${versionCode}, versionName="${versionName}" (unified keystore signing hook ready)`
+    );
   }
 
   return true;
@@ -201,13 +233,20 @@ function enableGoogleAuthInVariablesGradle() {
 
 function configureAndroidFirebaseGradle() {
   const googleAuthEnabled = enableGoogleAuthInVariablesGradle();
+  const appletCfg = readFirebaseAppletConfig();
+  const expectedProjectId = String(appletCfg?.projectId || '').trim();
+  const expectedProjectNumber = String(appletCfg?.messagingSenderId || '').trim();
   const report = {
     googleAuthEnabled,
     hasGoogleServices: false,
+    projectMatched: false,
+    googleServicesProjectId: '',
     packageMatched: false,
     mobileSdkAppId: '',
     hasWebClient: false,
+    webClientId: '',
     injectedWebClient: false,
+    sha1Count: 0,
     sha1List: [],
   };
 
@@ -224,6 +263,19 @@ function configureAndroidFirebaseGradle() {
 
   try {
     const parsed = JSON.parse(fs.readFileSync(googleServicesPath, 'utf8'));
+    const gsProjectId = String(parsed?.project_info?.project_id || '').trim();
+    const gsProjectNumber = String(parsed?.project_info?.project_number || '').trim();
+    report.googleServicesProjectId = gsProjectId;
+    report.projectMatched = Boolean(
+      (!expectedProjectId || gsProjectId === expectedProjectId) &&
+        (!expectedProjectNumber || gsProjectNumber === expectedProjectNumber)
+    );
+    if (!report.projectMatched) {
+      console.warn(
+        `WARNING: google-services.json project (${gsProjectId} / #${gsProjectNumber}) does NOT match firebase-applet-config.json (${expectedProjectId} / #${expectedProjectNumber}). This causes Google Sign-In Error 10!`
+      );
+    }
+
     const clients = Array.isArray(parsed.client) ? parsed.client : [];
     const matchingClient = clients.find(
       (c) => c?.client_info?.android_client_info?.package_name === 'com.ludocrown.game'
@@ -240,20 +292,27 @@ function configureAndroidFirebaseGradle() {
       }
 
       const androidClients = matchingClient.oauth_client.filter((o) => o?.client_type === 1);
-      report.sha1List = androidClients
-        .map((o) => formatSha1Hex(o?.android_info?.certificate_hash))
-        .filter(Boolean);
+      report.sha1List = Array.from(
+        new Set(
+          androidClients
+            .map((o) => formatSha1Hex(o?.android_info?.certificate_hash))
+            .filter(Boolean)
+        )
+      );
+      report.sha1Count = report.sha1List.length;
 
-      let hasWebClient = matchingClient.oauth_client.some((o) => o?.client_type === 3 && o?.client_id);
+      let webClientObj = matchingClient.oauth_client.find((o) => o?.client_type === 3 && o?.client_id);
+      let hasWebClient = Boolean(webClientObj);
 
       // Ensure client_type=3 (Web OAuth Client ID) exists so google-services Gradle plugin generates R.string.default_web_client_id
       if (!hasWebClient) {
         const fallbackWebClientId = readWebOAuthClientId();
         if (fallbackWebClientId) {
-          matchingClient.oauth_client.push({
+          webClientObj = {
             client_id: fallbackWebClientId,
             client_type: 3,
-          });
+          };
+          matchingClient.oauth_client.push(webClientObj);
           if (!matchingClient.services) matchingClient.services = {};
           if (!matchingClient.services.appinvite_service) {
             matchingClient.services.appinvite_service = { other_platform_oauth_client: [] };
@@ -280,12 +339,17 @@ function configureAndroidFirebaseGradle() {
       }
 
       report.hasWebClient = hasWebClient;
+      report.webClientId = String(webClientObj?.client_id || '').trim();
       console.log(
-        `Verified google-services.json for com.ludocrown.game (appId=${report.mobileSdkAppId || 'UNKNOWN'}, analyticsSdk=enabled, webOAuthClient=${hasWebClient}, androidSha1Count=${report.sha1List.length}, sha1s=${report.sha1List.join(', ') || 'NONE'})`
+        `Verified google-services.json for com.ludocrown.game (projectMatched=${report.projectMatched}, appId=${report.mobileSdkAppId || 'UNKNOWN'}, analyticsSdk=enabled, webOAuthClient=${hasWebClient}, androidSha1Count=${report.sha1Count}, sha1s=${report.sha1List.join(', ') || 'NONE'})`
       );
-      if (report.sha1List.length === 0) {
+      if (report.sha1Count === 0) {
         console.warn(
-          'WARNING: google-services.json has no Android SHA-1 OAuth client (client_type=1). Add your APK SHA-1 fingerprint in Firebase Console and re-download google-services.json.'
+          'WARNING: google-services.json has NO Android SHA-1 OAuth client (client_type=1). Add BOTH your Upload Key SHA-1 and Google Play App Signing SHA-1 in Firebase Console and re-download google-services.json.'
+        );
+      } else if (report.sha1Count === 1) {
+        console.warn(
+          'NOTE: google-services.json has only 1 Android SHA-1. If distributing via Google Play (.aab), also add Google Play App Signing SHA-1 from Play Console -> Setup -> App integrity -> App signing key certificate.'
         );
       }
     }

@@ -430,6 +430,9 @@ export async function createMultiplayerRoom(
   };
 
   try {
+    // Hard server-side invariant: exit any lingering active online match before opening a new table
+    await forfeitAllOtherActiveRoomsForUser(profile.uid, profile.displayName, roomCode);
+
     await setDoc(doc(db, 'rooms', roomCode), {
       roomCode,
       hostUid: profile.uid,
@@ -569,6 +572,9 @@ export async function joinRoomByCode(roomCodeRaw: string, profile: PlayerProfile
       forfeited: false,
       dryRolls: 0,
     };
+
+    // Hard server-side invariant: exit any other active online match before joining this table
+    await forfeitAllOtherActiveRoomsForUser(profile.uid, profile.displayName, roomCode);
 
     const nextPlayerUids = [...room.playerUids, profile.uid];
     const nextSeats = [...room.seats, newSeat];
@@ -753,7 +759,7 @@ export async function updateRoomSeatPresence(
 
     let changed = false;
     const nextSeats: RoomSeat[] = data.seats.map((seat) => {
-      if (seat.uid !== targetUid || seat.isBot) return seat;
+      if (seat.uid !== targetUid || seat.isBot || seat.forfeited) return seat;
       const nextSeat: RoomSeat = {
         ...seat,
         ...(updates.autoPlay !== undefined ? { autoPlay: updates.autoPlay } : {}),
@@ -790,46 +796,66 @@ export async function updateRoomSeatPresence(
 export const ACTIVE_PLAYING_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 export const PRIVATE_WAITING_ROOM_TTL_MS = 10 * 60 * 1000;
 
+function normalizeRoomDocSnapshot(id: string, data: Record<string, unknown>, nowMs: number): RoomDoc {
+  const updatedAtMs =
+    data.updatedAt instanceof Timestamp
+      ? data.updatedAt.toMillis()
+      : data.createdAt instanceof Timestamp
+        ? data.createdAt.toMillis()
+        : typeof data.updatedAtMs === 'number'
+          ? data.updatedAtMs
+          : nowMs;
+  return {
+    ...(data as Omit<RoomDoc, 'id'>),
+    id,
+    updatedAtMs,
+  };
+}
+
+export function isRoomActiveForUser(room: RoomDoc, uid: string, nowMs: number = Date.now()): boolean {
+  if (!room || room.status === 'finished') return false;
+  const mySeat = room.seats?.find((s) => !s.isBot && s.uid === uid);
+  if (!mySeat || mySeat.forfeited) return false;
+  const age = Math.max(0, nowMs - (room.updatedAtMs || nowMs));
+  if (room.status === 'playing') {
+    return age <= ACTIVE_PLAYING_ROOM_TTL_MS;
+  }
+  if (room.status === 'waiting') {
+    return room.visibility === 'public'
+      ? age <= PUBLIC_ROOM_STALE_MS * 2
+      : age <= PRIVATE_WAITING_ROOM_TTL_MS;
+  }
+  return false;
+}
+
+export function isRoomBlockingNewMatch(
+  room: RoomDoc,
+  uid: string,
+  nowMs: number = Date.now()
+): boolean {
+  if (!isRoomActiveForUser(room, uid, nowMs)) return false;
+  if (room.status === 'waiting') return true;
+  if (room.status === 'playing') {
+    const mySeat = room.seats?.find((s) => !s.isBot && s.uid === uid);
+    return Boolean(mySeat && !isSeatFinished(mySeat, room.tokens));
+  }
+  return false;
+}
+
 export function subscribeUserActiveRooms(
   uid: string,
   onData: (rooms: RoomDoc[]) => void
 ): Unsubscribe {
-  const path = 'rooms';
-  const q = query(collection(db, 'rooms'), where('playerUids', 'array-contains', uid), limit(15));
+  // Generous limit avoids alphabetical cutoff once a player completes 15+ historical matches
+  // (paired with direct per-room doc subscriptions for pinned active rooms so scaling is unbounded).
+  const q = query(collection(db, 'rooms'), where('playerUids', 'array-contains', uid), limit(300));
   return onSnapshot(
     q,
     (snap) => {
       const now = Date.now();
       const active = snap.docs
-        .map((d) => {
-          const data = d.data();
-          const updatedAtMs =
-            data.updatedAt instanceof Timestamp
-              ? data.updatedAt.toMillis()
-              : data.createdAt instanceof Timestamp
-                ? data.createdAt.toMillis()
-                : now;
-          return {
-            ...(data as Omit<RoomDoc, 'id'>),
-            id: d.id,
-            updatedAtMs,
-          };
-        })
-        .filter((room) => {
-          if (room.status === 'finished') return false;
-          const mySeat = room.seats?.find((s) => !s.isBot && s.uid === uid);
-          if (mySeat?.forfeited) return false;
-          const age = now - (room.updatedAtMs || 0);
-          if (room.status === 'playing') {
-            return age <= ACTIVE_PLAYING_ROOM_TTL_MS;
-          }
-          if (room.status === 'waiting') {
-            return room.visibility === 'public'
-              ? age <= PUBLIC_ROOM_STALE_MS * 2
-              : age <= PRIVATE_WAITING_ROOM_TTL_MS;
-          }
-          return false;
-        })
+        .map((d) => normalizeRoomDocSnapshot(d.id, d.data() as Record<string, unknown>, now))
+        .filter((room) => isRoomActiveForUser(room, uid, now))
         .sort((a, b) => {
           if (a.status !== b.status) return a.status === 'playing' ? -1 : 1;
           return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
@@ -840,6 +866,83 @@ export function subscribeUserActiveRooms(
       console.warn('Active rooms subscription warning:', error?.message || error);
     }
   );
+}
+
+export async function fetchAllBlockingActiveRooms(
+  uid: string,
+  pinnedRoomIds: string[] = []
+): Promise<RoomDoc[]> {
+  if (!uid) return [];
+  const now = Date.now();
+  const byId = new Map<string, RoomDoc>();
+
+  const consider = (room: RoomDoc) => {
+    if (!isRoomBlockingNewMatch(room, uid, now)) return;
+    const prev = byId.get(room.id);
+    if (!prev || (room.updatedAtMs || 0) >= (prev.updatedAtMs || 0)) {
+      byId.set(room.id, room);
+    }
+  };
+
+  // 1. Direct O(1) lookup for every pinned room ID (100% immune to historical room count or query limits)
+  const uniquePinned = Array.from(new Set(pinnedRoomIds.filter(Boolean))).slice(0, 8);
+  if (uniquePinned.length > 0) {
+    const snaps = await Promise.allSettled(
+      uniquePinned.map((roomId) => getDoc(doc(db, 'rooms', roomId)))
+    );
+    for (const res of snaps) {
+      if (res.status === 'fulfilled' && res.value.exists()) {
+        consider(
+          normalizeRoomDocSnapshot(res.value.id, res.value.data() as Record<string, unknown>, now)
+        );
+      }
+    }
+  }
+
+  // 2. Always also scan server rooms for this user so ALL active matches (even legacy or multi-device) are caught
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'rooms'), where('playerUids', 'array-contains', uid), limit(300))
+    );
+    for (const d of snap.docs) {
+      consider(normalizeRoomDocSnapshot(d.id, d.data() as Record<string, unknown>, now));
+    }
+  } catch {
+    // Offline or transient failure: rely on pinned checks
+  }
+
+  return Array.from(byId.values()).sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'playing' ? -1 : 1;
+    return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+  });
+}
+
+export async function fetchBlockingActiveRoom(
+  uid: string,
+  pinnedRoomIds: string[] = []
+): Promise<RoomDoc | null> {
+  const all = await fetchAllBlockingActiveRooms(uid, pinnedRoomIds);
+  return all[0] || null;
+}
+
+export async function forfeitAllOtherActiveRoomsForUser(
+  uid: string,
+  playerName: string,
+  excludeRoomId?: string | null,
+  pinnedRoomIds: string[] = []
+): Promise<string[]> {
+  if (!uid) return [];
+  try {
+    const activeRooms = await fetchAllBlockingActiveRooms(uid, pinnedRoomIds);
+    const toForfeit = activeRooms.filter((r) => !excludeRoomId || r.id !== excludeRoomId);
+    if (toForfeit.length === 0) return [];
+    await Promise.allSettled(
+      toForfeit.map((r) => forfeitActiveRoomDoc(r, uid, playerName || 'Player'))
+    );
+    return toForfeit.map((r) => r.id);
+  } catch {
+    return [];
+  }
 }
 
 export async function leaveWaitingRoom(room: RoomDoc, uid: string, playerName: string) {
@@ -944,10 +1047,12 @@ export async function forfeitActiveRoomDoc(
       return s;
     });
     const champion = finalSeats.find((s) => s.finishRank === 1) || finalSeats[0];
+    const safeTurnIndex = Math.min(Math.max(0, latestRoom.turnIndex || 0), Math.max(0, finalSeats.length - 1));
+    const safeTurnCount = Math.min(10000, Math.max(0, (latestRoom.turnCount || 0) + 1));
     await updateMultiplayerTurn(latestRoom.id, {
       seats: finalSeats,
       tokens: latestRoom.tokens,
-      turnIndex: latestRoom.turnIndex,
+      turnIndex: safeTurnIndex,
       diceValue: 0,
       turnPhase: 'roll',
       consecutiveSixes: 0,
@@ -955,7 +1060,7 @@ export async function forfeitActiveRoomDoc(
       winnerColor: latestRoom.winnerColor || champion?.color || '',
       winnerUid: latestRoom.winnerUid || champion?.uid || '',
       lastActionText: clampString(`${playerName} exited — match ended.`, 120),
-      turnCount: latestRoom.turnCount + 1,
+      turnCount: safeTurnCount,
     });
     return;
   }

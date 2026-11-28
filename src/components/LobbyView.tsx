@@ -243,10 +243,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
 
   return (
     <div className="max-w-[1040px] mx-auto px-3.5 sm:px-6 py-3 sm:py-4 pb-6">
-      {/* Active Running Rooms Notification Banner — lets players jump straight back into any ongoing match */}
+      {/* Active Running Room Notification Banner — strictly 1 active match at any instant */}
       {isSignedIn && myActiveRooms.length > 0 && (
         <div className="mb-4 space-y-2.5 animate-pop-in">
-          {myActiveRooms.slice(0, 3).map((room) => {
+          {myActiveRooms.slice(0, 1).map((room) => {
             const isPlayingRoom = room.status === 'playing';
             const mySeatInRoom = room.seats.find((s) => !s.isBot && s.uid === profile.uid);
             const myFinishRank = mySeatInRoom?.finishRank;
@@ -265,9 +265,9 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               <div
                 key={room.id}
                 role="status"
-                className="rounded-3xl bg-gradient-to-r from-[#ECFDF5] via-[#DCFCE7] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-4 py-3 flex items-center justify-between gap-3"
+                className="rounded-3xl bg-gradient-to-r from-[#ECFDF5] via-[#DCFCE7] to-[#FEF9C3] border-2 border-[#111827] shadow-[0_5px_0_#111827] px-3.5 sm:px-4 py-3 flex items-center justify-between gap-2.5 sm:gap-3"
               >
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                   <div className="relative w-10 h-10 rounded-2xl bg-gradient-to-b from-[#34F59F] to-[#059669] text-white border-2 border-[#111827] flex items-center justify-center shrink-0 shadow-xs">
                     {myFinishRank ? (
                       <Crown className="w-5 h-5 text-[#FEF08A]" />
@@ -282,7 +282,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-display text-sm font-extrabold text-[#111827] truncate">
-                        {isPlayingRoom ? 'Active Match Running' : 'Waiting Table Open'}
+                        {isPlayingRoom ? 'Active Match' : 'Waiting Table'}
                       </span>
                       <span className="px-2 py-0.5 rounded-full bg-white border border-[#111827] font-mono text-[10px] font-black text-[#1D4ED8] leading-none">
                         {room.roomCode}
@@ -535,16 +535,16 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 type="button"
                 disabled={busyAction !== null}
                 onClick={() => handleQuickOnlineMode(playerCount, 'hero_online')}
-                className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full bg-gradient-to-b from-[#FFF066] to-[#FACC15] hover:brightness-105 active:translate-y-0.5 border-2 border-[#111827] shadow-[0_3px_0_#111827] cursor-pointer transition-all disabled:opacity-60"
-                title={`Play ${playerCount}P Online Match Instantly`}
+                className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full bg-gradient-to-b from-[#FFF066] to-[#FACC15] hover:brightness-105 active:translate-y-0.5 border-2 border-[#111827] shadow-[0_3px_0_#111827] cursor-pointer transition-all disabled:opacity-60 whitespace-nowrap"
+                title={`Jump into a live ${playerCount}P Classic Online match`}
               >
                 <Crown className="w-3.5 h-3.5 text-[#E11D48] fill-[#E11D48] animate-badge-bob shrink-0" />
                 <span className="font-display text-xs font-black tracking-tight text-[#111827]">
                   {busyAction === 'hero_online' ? 'MATCHING...' : 'LUDO CROWN'}
                 </span>
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[#1D4ED8] text-white text-[9px] font-display font-extrabold leading-none">
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[#1D4ED8] text-white text-[9px] font-display font-extrabold leading-none whitespace-nowrap">
                   <Play className="w-2.5 h-2.5 fill-current" />
-                  PLAY
+                  PLAY LIVE
                 </span>
               </button>
 
@@ -639,7 +639,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 <div className="relative w-12 h-12 rounded-2xl border-2 border-[#111827] shadow-[0_3px_0_#111827] overflow-hidden bg-[#10B981] animate-badge-bob">
                   <img
                     src={MODE_DUEL1V1_IMAGE}
-                    alt="Play Online"
+                    alt="Classic Online"
                     draggable={false}
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover scale-[1.12] group-hover:scale-[1.22] transition-transform duration-200"
@@ -651,10 +651,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 </div>
                 <div className="mt-2.5 w-full">
                   <div className="font-display text-xs sm:text-sm font-extrabold text-[#111827] leading-tight truncate">
-                    {busyAction === 'random_online' ? 'Matching...' : 'Play Online'}
+                    {busyAction === 'random_online' ? 'Matching...' : 'Classic Online'}
                   </div>
                   <div className="text-[10px] sm:text-[11px] font-bold text-[#047857] mt-0.5 truncate">
-                    Random 2P / 4P
+                    Live players · 2P/4P
                   </div>
                 </div>
               </button>
@@ -987,8 +987,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
               </p>
             ) : openRooms.length === 0 ? (
               <p className="text-xs text-[#64748B]">
-                No public waiting tables right now. Tap <strong>Play Online</strong> to match with
-                random 2P or 4P players, or <strong>Create room</strong> to host a table!
+                No public tables waiting right now. Tap <strong>Classic Online</strong> to match with
+                live 2P or 4P players, or <strong>Create room</strong> to host your own!
               </p>
             ) : (
               <div className="space-y-2 max-h-[168px] overflow-y-auto no-scrollbar">
@@ -1133,7 +1133,9 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             </div>
 
             <div>
-              <div className="text-xs font-bold text-[#475569] mb-2">Table size (Private & Bot)</div>
+              <div className="text-xs font-bold text-[#475569] mb-2">
+                Default players (Online, Private &amp; Bot)
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 {([2, 4] as const).map((cnt) => (
                   <button
@@ -1153,20 +1155,20 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
             </div>
 
             <div>
-              <div className="text-xs font-bold text-[#475569] mb-2">Rule set</div>
+              <div className="text-xs font-bold text-[#475569] mb-2">Game style</div>
               <div className="grid grid-cols-2 gap-2">
-                {(['quick', 'classic'] as GameMode[]).map((m) => (
+                {(['classic', 'quick'] as GameMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"
                     onClick={() => setMode(m)}
-                    className={`py-2.5 rounded-xl font-display text-sm font-extrabold capitalize cursor-pointer ${
+                    className={`py-2.5 rounded-xl font-display text-sm font-extrabold cursor-pointer ${
                       mode === m
                         ? 'game-btn-gold'
                         : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
                     }`}
                   >
-                    {m} rules
+                    {m === 'classic' ? 'Classic Ludo' : 'Quick Match'}
                   </button>
                 ))}
               </div>
@@ -1392,14 +1394,14 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
           </div>,
           document.body
         )}
-      {/* RANDOM ONLINE MATCH MODAL (2P or 4P Selector) */}
+      {/* CLASSIC ONLINE MATCH MODAL (2P or 4P Selector) */}
       {randomMatchModalOpen &&
         createPortal(
           <div
             className="fixed inset-0 z-[70] bg-[#0F172A]/55 backdrop-blur-xs flex items-center justify-center p-4"
             role="dialog"
             aria-modal="true"
-            aria-label="Play Online Random Match"
+            aria-label="Classic Online Match"
             onClick={(e) => {
               if (e.target === e.currentTarget) setRandomMatchModalOpen(false);
             }}
@@ -1410,7 +1412,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   <div className="relative w-10 h-10 rounded-xl bg-gradient-to-b from-[#34F59F] to-[#059669] border-2 border-[#111827] overflow-hidden shrink-0 flex items-center justify-center">
                     <img
                       src={MODE_DUEL1V1_IMAGE}
-                      alt="Play Online"
+                      alt="Classic Online"
                       draggable={false}
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover scale-[1.12]"
@@ -1418,10 +1420,10 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   </div>
                   <div>
                     <h2 className="font-display text-lg font-extrabold text-[#111827] leading-tight">
-                      Play Online
+                      Classic Online
                     </h2>
                     <p className="text-[11px] font-semibold text-[#64748B]">
-                      Random matchmaking · 30s live lobby
+                      Play live with real players · Instant table matching
                     </p>
                   </div>
                 </div>
@@ -1429,7 +1431,7 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   type="button"
                   onClick={() => setRandomMatchModalOpen(false)}
                   className="p-1.5 rounded-xl bg-[#F1F5F9] border border-[#CBD5E1] text-[#334155] hover:border-[#111827] cursor-pointer"
-                  aria-label="Close random match setup"
+                  aria-label="Close Classic Online setup"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1437,19 +1439,19 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
 
               <div className="space-y-4">
                 <div>
-                  <div className="text-xs font-bold text-[#475569] mb-2">Choose table size</div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Choose your table</div>
                   <div className="grid grid-cols-2 gap-2.5">
                     {([
                       {
                         count: 2 as const,
                         title: '2 Players',
-                        sub: 'Fast 1v1 showdown',
+                        sub: 'Head-to-head 1v1',
                         dots: ['#EC1C24', '#FACC15'],
                       },
                       {
                         count: 4 as const,
                         title: '4 Players',
-                        sub: 'Full 4-corner board',
+                        sub: 'Classic 4-corner board',
                         dots: ['#EC1C24', '#10B981', '#FACC15', '#2563EB'],
                       },
                     ]).map((opt) => {
@@ -1487,27 +1489,27 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                 </div>
 
                 <div>
-                  <div className="text-xs font-bold text-[#475569] mb-2">Rule set</div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Game style</div>
                   <div className="grid grid-cols-2 gap-2">
-                    {(['quick', 'classic'] as GameMode[]).map((m) => (
+                    {(['classic', 'quick'] as GameMode[]).map((m) => (
                       <button
                         key={m}
                         type="button"
                         onClick={() => setMode(m)}
-                        className={`py-2 rounded-xl font-display text-xs font-extrabold capitalize cursor-pointer ${
+                        className={`py-2 rounded-xl font-display text-xs font-extrabold cursor-pointer ${
                           mode === m
                             ? 'game-btn-gold'
                             : 'bg-[#F8FAFC] border-2 border-[#CBD5E1] text-[#334155]'
                         }`}
                       >
-                        {m} rules
+                        {m === 'classic' ? 'Classic Ludo' : 'Quick Match'}
                       </button>
                     ))}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-xs font-bold text-[#475569] mb-2">Match stake</div>
+                  <div className="text-xs font-bold text-[#475569] mb-2">Entry stake</div>
                   <div className="grid grid-cols-3 gap-2">
                     {([100, 250, 500] as const).map((s) => (
                       <button
@@ -1533,8 +1535,8 @@ export function LobbyView({ onOpenWheel, onOpenAdPolicy }: LobbyViewProps) {
                   className="w-full py-3 rounded-2xl font-display font-extrabold text-sm game-btn-green btn-gloss-sheen cursor-pointer disabled:opacity-60"
                 >
                   {busyAction === 'random_online'
-                    ? 'Finding players...'
-                    : `Find ${randomMatchPlayers}P Online Match`}
+                    ? 'Finding live table...'
+                    : `Play ${randomMatchPlayers}P Live Match`}
                 </button>
               </div>
             </div>

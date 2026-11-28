@@ -37,6 +37,13 @@ Save the outputs and add these 4 secrets in your GitHub repo (**Settings → Sec
 2. Download **`LudoCrown-PlayStore-Signed-Release`** and install **`app-release.apk`** on your phone (uninstall the old debug APK first so signatures don't conflict).
 3. **Google Sign-In**, **Play Online**, **Play Friends**, **Tournaments**, and **Cloud Sync** will now all work natively!
 
+### Step D — Mandatory for Google Play Store `.aab` Bundles (Prevents Error `10:`)
+When you upload `app-release.aab` to Google Play Console (Internal testing, Closed testing, or Production), Google Play **re-signs** your app with its own **App Signing key** (a different SHA-1 than your upload keystore):
+1. In **Google Play Console**, go to **Test and release → Setup → App integrity → App signing**.
+2. Copy the **App signing key certificate SHA-1** (and **SHA-256**).
+3. In **Firebase Console → Project Settings → General → Your apps → `com.ludocrown.game`**, click **Add fingerprint** and paste Google Play's **App signing key SHA-1** alongside your Upload Keystore SHA-1.
+4. Re-download **`google-services.json`**, base64-encode it (`base64 -w 0 google-services.json`), and update the **`GOOGLE_SERVICES_JSON_BASE64`** GitHub secret, then re-run the workflow.
+
 ---
 
 ## 2. Enable Live Google AdMob Banners in the APK
